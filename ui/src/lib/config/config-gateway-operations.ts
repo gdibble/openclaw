@@ -1,15 +1,16 @@
-import { ErrorCodes } from "@openclaw/gateway-client/browser";
+import { ErrorCodes, isGatewayProtocolResponseError } from "@openclaw/gateway-client/browser";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { err as failure, ok, type Result } from "@openclaw/normalization-core/result";
 import { GatewayRequestError, type GatewayBrowserClient } from "../../api/gateway.ts";
 import type { ConfigSchemaResponse, ConfigSnapshot } from "../../api/types.ts";
 import { t } from "../../i18n/index.ts";
 import { copyToClipboard } from "../clipboard.ts";
-import { serializeConfigForm } from "../config-form-utils.ts";
 import { formatUiError, formatUiExternalText } from "../format-error.ts";
 import { showToast } from "../toast.ts";
 import {
   adoptConfigWriteAck,
+  isConfigWriteAck,
+  comparableSnapshotRaw,
   configFormForSubmit,
   assertConfigDraftCurrent,
   type ConfigSubmittedDraft,
@@ -31,14 +32,6 @@ import {
   type LoadConfigOptions,
   type RuntimeConfigState,
 } from "./config-state-model.ts";
-
-function comparableSnapshotRaw(snapshot: RuntimeConfigState["configSnapshot"]): string | null {
-  if (typeof snapshot?.raw === "string") {
-    return snapshot.raw;
-  }
-  const editable = resolveEditableSnapshotConfig(snapshot);
-  return editable ? serializeConfigForm(editable) : null;
-}
 
 export async function refreshDraft(
   state: RuntimeConfigState,
@@ -108,10 +101,14 @@ function configMutationFailure(
 }
 
 function isDefinitiveConfigMutationRejection(err: unknown): boolean {
-  return (
-    err instanceof GatewayRequestError &&
-    (err.gatewayCode === ErrorCodes.INVALID_REQUEST || err.gatewayCode === ErrorCodes.FORBIDDEN)
-  );
+  if (!(err instanceof GatewayRequestError)) {
+    return false;
+  }
+  const details = isRecord(err.details) ? err.details : null;
+  if (details && (details.publication === "partial" || details.publication === "complete")) {
+    return details.rollbackStatus === "restored";
+  }
+  return err.gatewayCode === ErrorCodes.INVALID_REQUEST || err.gatewayCode === ErrorCodes.FORBIDDEN;
 }
 
 export type ConfigPatchOptions = {
@@ -124,9 +121,7 @@ export type ConfigPatchOptions = {
 };
 
 export type ConfigPatchBuildResult = { options: ConfigPatchOptions } | { error: string };
-export type ConfigPatchBuilder = (
-  config: Readonly<Record<string, unknown>>,
-) => ConfigPatchBuildResult;
+type ConfigPatchBuilder = (config: Readonly<Record<string, unknown>>) => ConfigPatchBuildResult;
 // Gateway commitGatewayConfigWrite returns persisted hashes; only a no-op patch omits one.
 export type ConfigPatchAck =
   | { noop: true; config: Record<string, unknown> }
@@ -154,7 +149,7 @@ export type RuntimeConfigExternalMutationOptions<T = unknown> = {
   configWriteAck?: (value: T) => ConfigPatchAck;
 };
 
-export type RuntimeConfigDispatchOptions = {
+type RuntimeConfigDispatchOptions = {
   canDispatch?: () => boolean;
 };
 
@@ -166,10 +161,13 @@ export type ConfigMethod =
   | "config.schema";
 
 export type ConfigWriteCoordinator = {
+  hasUnacknowledgedDraftWrite: () => boolean;
+  applySnapshot: (snapshot: ConfigSnapshot, options?: LoadConfigOptions) => void;
   patchForm: (path: Array<string | number>, value: unknown) => void;
   removeFormValue: (path: Array<string | number>) => void;
   setRaw: (value: string) => void;
   discardDraft: (options?: { reloadOnly?: boolean }) => Promise<void>;
+  discardFormValue: (path: Array<string | number>) => Promise<boolean>;
   setWritesSuspended: (suspended: boolean, refreshAdmission?: () => Promise<void>) => void;
   waitForPendingWrites: () => Promise<void>;
   flushFormChanges: () => Promise<boolean>;
@@ -210,6 +208,7 @@ export async function executeConfigExternalMutation<T>(
     };
   }
   const submitted = {
+    operation: "independent" as const,
     raw: state.configFormDirty ? state.configRawOriginal : serializeFormForSubmit(state),
     form: state.configFormOriginal,
     independentSnapshot: state.configSnapshot,
@@ -291,6 +290,7 @@ export async function executeConfigExternalMutation<T>(
 type ConfigLoadOptions = LoadConfigOptions & {
   background?: boolean;
   beforeApplySnapshot?: () => void;
+  draftWrites?: Pick<ConfigWriteCoordinator, "hasUnacknowledgedDraftWrite" | "applySnapshot">;
 };
 
 function startConfigLoad(
@@ -318,10 +318,11 @@ export function loadConfig(
 
 export async function refreshConfigAfterMutation(
   state: RuntimeConfigState,
+  options: ConfigLoadOptions = {},
 ): Promise<Result<void, string>> {
   // A generation event can precede the RPC's final commit. Always issue a fresh
   // read here; only actual later reads can satisfy this mutation's refresh.
-  let read = startConfigLoad(state);
+  let read = startConfigLoad(state, options);
   if (!read) {
     return failure("Configuration is unavailable; reconnect and try again.");
   }
@@ -353,7 +354,12 @@ async function readConfig(
   if (!options.background) {
     state.configLoading = true;
   }
-  if (state.configAutoSaveStatus !== "error" && state.configAutoSaveStatus !== "conflict") {
+  // Foreground reads replace transient errors, but a retained draft conflict still needs resolution.
+  if (
+    !options.draftWrites?.hasUnacknowledgedDraftWrite() &&
+    state.configAutoSaveStatus !== "conflict" &&
+    (!options.background || state.configAutoSaveStatus !== "error")
+  ) {
     state.lastError = null;
     state.chatError = null;
   }
@@ -377,10 +383,18 @@ async function readConfig(
     if (!isCurrent()) {
       return failure("The configuration refresh was superseded.");
     }
-    applyConfigSnapshot(state, res, options);
+    if (options.draftWrites) {
+      options.draftWrites.applySnapshot(res, options);
+    } else {
+      applyConfigSnapshot(state, res, options);
+    }
     // An explicit reload reconciles a clean patch failure. Background applied-revision
     // polling must leave the rejected intent and its explanation visible.
-    if (!options.background && !state.configFormDirty) {
+    if (
+      !options.background &&
+      !state.configFormDirty &&
+      !options.draftWrites?.hasUnacknowledgedDraftWrite()
+    ) {
       if (state.configAutoSaveStatus === "error" || state.configAutoSaveStatus === "conflict") {
         state.configAutoSaveStatus = "idle";
       }
@@ -393,6 +407,9 @@ async function readConfig(
     }
     const outcome = configMutationFailure(state, error);
     state.lastError = outcome.message;
+    if (options.draftWrites?.hasUnacknowledgedDraftWrite()) {
+      state.configAutoSaveStatus = "error";
+    }
     return failure(outcome.message);
   } finally {
     if (isCurrentRequest(state, "config", version, client, connectionEpoch)) {
@@ -435,7 +452,12 @@ function applyConfigSchema(state: RuntimeConfigState, res: ConfigSchemaResponse)
   state.configSchemaVersion = res.version ?? null;
 }
 
-export type ConfigSubmission = ConfigSubmittedDraft & { ack: ConfigWriteAck | null };
+export type ConfigSubmission = ConfigSubmittedDraft & {
+  operation: "save" | "apply" | "independent";
+  ack: ConfigWriteAck | null;
+  /** A terminal Gateway refusal, excluding uncertain publication or transport failure. */
+  rejected?: true;
+};
 export type ConfigSubmissionObserver = (submission: ConfigSubmission) => void;
 
 export async function submitConfigDraft(
@@ -460,6 +482,7 @@ export async function submitConfigDraft(
     state.chatError = null;
   }
   let submittedFormRaw: string | null = null;
+  let submission: ConfigSubmission | null = null;
   try {
     if (state.configRawOriginalParsePending) {
       // JSON5 originals load lazily; capture the submitted bytes only afterward.
@@ -470,7 +493,12 @@ export async function submitConfigDraft(
     }
     assertConfigDraftCurrent(state);
     const raw = serializeFormForSubmit(state);
-    const submitted = { raw, form: configFormForSubmit(state), independentSnapshot: null };
+    const submitted = {
+      operation: mode === "apply" ? ("apply" as const) : ("save" as const),
+      raw,
+      form: configFormForSubmit(state),
+      independentSnapshot: null,
+    };
     submittedFormRaw = state.configFormMode === "form" ? raw : null;
     const baseHash = state.configDraftBaseHash ?? state.configSnapshot?.hash;
     if (!baseHash) {
@@ -489,7 +517,8 @@ export async function submitConfigDraft(
       state.chatError = null;
     }
     // Dispatch bytes let reconnect recognize a committed write whose ack was lost.
-    onSubmitted?.({ ...submitted, ack: null });
+    submission = { ...submitted, ack: null };
+    onSubmitted?.(submission);
     const ack = await client.request<ConfigWriteAck>(
       mode === "apply" ? "config.apply" : "config.set",
       { raw, baseHash, ...(mode === "apply" ? { sessionKey: state.applySessionKey } : {}) },
@@ -516,10 +545,17 @@ export async function submitConfigDraft(
   } catch (err) {
     if (isCurrent()) {
       const outcome = configMutationFailure(state, err, submittedFormRaw);
-      state.lastError = outcome.message;
-      if (outcome.status === "conflict" || mode !== "apply") {
-        state.configAutoSaveStatus = outcome.status;
+      // A response can follow persistence without completing runtime apply.
+      // Only a pre-write refusal or confirmed rollback retires the receipt.
+      if (
+        submission &&
+        state.configRecoveryError === null &&
+        isDefinitiveConfigMutationRejection(err)
+      ) {
+        onSubmitted?.({ ...submission, rejected: true });
       }
+      state.lastError = outcome.message;
+      state.configAutoSaveStatus = outcome.status;
     }
     return false;
   } finally {
@@ -587,6 +623,7 @@ export async function patchConfig(
   }
   const draftStatus = state.configFormDirty ? state.configAutoSaveStatus : "idle";
   const submitted = {
+    operation: "independent" as const,
     raw: state.configRawOriginal,
     form: state.configFormOriginal,
     independentSnapshot: currentSnapshot,
@@ -628,6 +665,23 @@ export async function patchConfig(
     return true;
   } catch (err) {
     if (isCurrentConfigConnection(state, client, connectionEpoch)) {
+      if (
+        err instanceof GatewayRequestError &&
+        isGatewayProtocolResponseError(err) &&
+        err.gatewayCode === ErrorCodes.UNAVAILABLE &&
+        isRecord(err.details) &&
+        err.details.publication !== "partial" &&
+        err.details.publication !== "complete" &&
+        isConfigWriteAck(err.details.persistedConfig)
+      ) {
+        // This negative response confirms persistence, not runtime application.
+        onSubmitted?.({ ...submitted, ack: err.details.persistedConfig });
+        const adoptedStatus = adoptConfigWriteAck(state, submitted, err.details.persistedConfig);
+        state.configNeedsApply = true;
+        if (adoptedStatus === "conflict") {
+          return false;
+        }
+      }
       const outcome = configMutationFailure(state, err);
       state.lastError = outcome.message;
       state.configAutoSaveStatus = outcome.status;

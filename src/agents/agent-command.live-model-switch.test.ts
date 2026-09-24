@@ -1,6 +1,5 @@
-/** Tests live model switching behavior in active agent command sessions. */
-
 import fs from "node:fs/promises";
+/** Tests live model switching behavior in active agent command sessions. */
 import os from "node:os";
 import path from "node:path";
 import { expectDefined, toStringifiedError } from "@openclaw/normalization-core";
@@ -9,6 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { createDeferred } from "../../test/helpers/promise.js";
 import { setReplyPayloadMetadata } from "../auto-reply/reply-payload.js";
 import type { SessionEntry } from "../config/sessions.js";
+import { resolveInternalSessionEffectsIdentity } from "../config/sessions/internal-session-key.js";
 import * as sessionAccessor from "../config/sessions/session-accessor.js";
 import {
   resolveSqliteScope,
@@ -24,10 +24,8 @@ import { closeOpenClawAgentDatabasesAsync } from "../state/openclaw-agent-db.js"
 import { closeOpenClawStateDatabaseByPathAsync } from "../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { withEnvAsync } from "../test-utils/env.js";
-import {
-  deliveryContextFromSession,
-  normalizeSessionDeliveryState,
-} from "../utils/delivery-context.shared.js";
+import { deliveryContextFromSession } from "../utils/delivery-context.read.js";
+import { normalizeSessionDeliveryState } from "../utils/delivery-context.shared.js";
 import {
   getAdmittedRunDelegatedAuthority,
   type AdmittedRunContext,
@@ -41,7 +39,9 @@ import {
   createConfiguredModelCompatRuntimeConfig,
   createTestModelSelection,
   createTestModelVisibilityPolicy,
+  makeSuccessResult,
 } from "./agent-command.live-model-switch.test-helpers.js";
+import { registerAgentCommandRecoveryCases } from "./agent-command.restart-recovery.test-harness.js";
 import { createApiKeyCredential } from "./auth-profiles/credential-fixtures.test-support.js";
 import type { FailoverReason } from "./failover/signal.js";
 import { formatAgentInternalEventsForPrompt, type AgentInternalEvent } from "./internal-events.js";
@@ -49,7 +49,6 @@ import {
   INTERNAL_RUNTIME_CONTEXT_BEGIN,
   INTERNAL_RUNTIME_CONTEXT_END,
 } from "./internal-runtime-context.js";
-import { resolveInternalSessionEffectsTarget } from "./internal-session-effects.js";
 import { LiveSessionModelSwitchError } from "./live-model-switch-error.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.types.js";
 import type { ModelFallbackRunOptions } from "./model-fallback-attempt.js";
@@ -293,26 +292,11 @@ vi.mock("./command/session-store.runtime.js", () => ({
     state.updateSessionStoreAfterAgentRunMock(...args),
 }));
 
-vi.mock("./command/session.js", () => ({
-  resolveSession: () => {
-    const sessionEntry: SessionEntry = state.sessionEntryMock ?? {
-      sessionId: "session-1",
-      updatedAt: Date.now(),
-      skillsSnapshot: { prompt: "", skills: [], version: 0 },
-    };
-    return {
-      sessionId: "session-1",
-      sessionKey: state.resolvedSessionKeyMock ?? "agent:main:main",
-      sessionEntry,
-      sessionStore: state.sessionStoreMock,
-      storePath: state.storePathMock,
-      isNewSession: false,
-      persistedThinking:
-        typeof sessionEntry.thinkingLevel === "string" ? sessionEntry.thinkingLevel : undefined,
-      persistedVerbose: undefined,
-    };
-  },
-}));
+vi.mock("./command/session.js", async () => {
+  const { createTestSessionResolver } =
+    await import("./agent-command.live-model-switch.test-mocks.js");
+  return { resolveSession: createTestSessionResolver(state) };
+});
 
 vi.mock("./command/types.js", () => ({}));
 
@@ -372,15 +356,11 @@ vi.mock("@openclaw/acp-core/runtime/session-identifiers", () => ({
   resolveAcpSessionCwd: () => "/tmp",
 }));
 
-vi.mock("../auto-reply/thinking.js", () => ({
-  formatThinkingLevels: () => "low, medium, high",
-  normalizeThinkLevel: (v?: string) => v || undefined,
-  normalizeVerboseLevel: (v?: string) => v || undefined,
-  isThinkingLevelSupported: (args: unknown) => state.isThinkingLevelSupportedMock(args),
-  resolveSupportedThinkingLevel: (args: { level?: string }) =>
-    state.resolveSupportedThinkingLevelMock(args),
-  supportsXHighThinking: () => false,
-}));
+vi.mock("../auto-reply/thinking.js", async () => {
+  const { createTestThinkingPolicy } =
+    await import("./agent-command.live-model-switch.test-mocks.js");
+  return createTestThinkingPolicy(state);
+});
 
 vi.mock("../cli/command-format.js", () => ({
   formatCliCommand: (cmd: string) => cmd,
@@ -428,7 +408,7 @@ vi.mock("../plugins/plugin-metadata-snapshot.js", async (importOriginal) => {
 vi.mock("../skills/discovery/chat-commands.runtime.js", () => ({
   expandExplicitSkillReferences: ({ text }: { text: string }) => ({ body: text, skills: [] }),
   hasSkillReferenceCandidate: () => true,
-  listSkillCommandsForWorkspace: (params: unknown) =>
+  prepareSkillCommandsForWorkspace: async (params: unknown) =>
     state.listSkillCommandsForWorkspaceMock(params),
   resolveEffectiveAgentSkillFilter: () => undefined,
 }));
@@ -472,14 +452,14 @@ vi.mock("./internal-session-effects.js", async (importOriginal) => ({
     state.prepareInternalSessionEffectsSessionMock(...args),
 }));
 
-vi.mock("../infra/agent-events.js", () => ({
+vi.mock("../infra/agent-events.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../infra/agent-events.js")>()),
   assertAgentRunLifecycleGenerationCurrent: (...args: unknown[]) =>
     state.assertLifecycleCurrentMock(...args),
   captureAgentRunLifecycleGeneration: () => "test-generation",
   emitAgentEvent: (...args: unknown[]) => state.emitAgentEventMock(...args),
   getAgentEventLifecycleGeneration: () => "test-generation",
   isAgentEventLifecycleGenerationCurrent: (generation: string) => generation === "test-generation",
-  onAgentEvent: vi.fn(),
   registerAgentEventLifecycleRotationHandler: vi.fn(),
   withAgentRunLifecycleGeneration: (_generation: string, run: () => unknown) => run(),
 }));
@@ -648,6 +628,7 @@ vi.mock("./auth-profiles/session-override.js", () => ({
 }));
 
 vi.mock("./defaults.js", () => ({
+  DEFAULT_CONTEXT_TOKENS: 200_000,
   DEFAULT_MODEL: "claude",
   DEFAULT_PROVIDER: "anthropic",
 }));
@@ -821,18 +802,6 @@ function runSubsequentFallbackAttempt(
 
 type ModelSwitchOptions = ConstructorParameters<typeof LiveSessionModelSwitchError>[0];
 
-function makeSuccessResult(provider: string, model: string) {
-  return {
-    payloads: [{ text: "ok" }],
-    meta: {
-      durationMs: 100,
-      aborted: false,
-      stopReason: "end_turn",
-      agentMeta: { provider, model },
-    },
-  };
-}
-
 function makeEmptyResult(provider: string, model: string) {
   return {
     payloads: [],
@@ -1000,6 +969,16 @@ function expectFallbackOverrideCalls(first: boolean, second: boolean) {
   expectRecordFields(mockCallArg(state.resolveEffectiveModelFallbacksMock, 1), {
     hasSessionModelOverride: second,
   });
+}
+
+function getAgentCommandRecoveryFixture() {
+  return {
+    state,
+    agentCommand,
+    setupSingleAttemptFallback,
+    setupBareStoredSession,
+    makeSuccessResult,
+  };
 }
 
 describe("agentCommand – LiveSessionModelSwitchError retry", () => {
@@ -3049,37 +3028,7 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     }
   });
 
-  it("persists and clears current run delivery context for restart recovery", async () => {
-    setupSingleAttemptFallback();
-    state.runAgentAttemptMock.mockResolvedValue(makeSuccessResult("openai", "gpt-5.4"));
-    setupBareStoredSession();
-    state.deliverAgentCommandResultMock.mockResolvedValue({ deliverySucceeded: true });
-
-    await agentCommand({
-      message: "hello",
-      channel: "discord",
-      to: "discord:dm:123",
-      accountId: "main",
-      threadId: "reply-1",
-      deliver: true,
-    });
-
-    const persistedContexts = state.persistSessionEntryMock.mock.calls.map((call) => {
-      const params = call[0] as { entry?: SessionEntry };
-      return params.entry?.restartRecoveryDeliveryContext;
-    });
-    expect(persistedContexts).toContainEqual({
-      channel: "discord",
-      to: "discord:dm:123",
-      accountId: "main",
-      threadId: "reply-1",
-    });
-    const cleanupParams = state.persistSessionEntryMock.mock.calls.at(-1)?.[0] as
-      | { sessionStore?: Record<string, SessionEntry> }
-      | undefined;
-    const stored = cleanupParams?.sessionStore?.["agent:main:main"];
-    expect(stored?.restartRecoveryDeliveryContext).toBeUndefined();
-  });
+  registerAgentCommandRecoveryCases(getAgentCommandRecoveryFixture);
 
   it("records generated-media delivery runs as durable terminal sources", async () => {
     setupSingleAttemptFallback();
@@ -3404,6 +3353,7 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     await runDiscordDelivery();
 
     expect(state.loadSessionEntryMock).toHaveBeenCalledWith({
+      agentId: "default",
       storePath: "/tmp/openclaw-sessions.json",
       sessionKey: "agent:main:main",
       readConsistency: "latest",
@@ -4088,14 +4038,13 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
       "session preparation failed",
     );
 
-    const target = resolveInternalSessionEffectsTarget({
+    const target = resolveInternalSessionEffectsIdentity({
       agentId: "default",
       runId: "model-run-prepare-failure",
-      storePath: "/tmp/openclaw-session-store.json",
     });
     expect(state.applySessionEntryLifecycleMutationMock).toHaveBeenCalledWith({
-      agentId: target.agentId,
-      storePath: target.storePath,
+      agentId: "default",
+      storePath: "/tmp/openclaw-session-store.json",
       removals: [
         {
           sessionKey: target.sessionKey,

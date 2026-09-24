@@ -20,6 +20,7 @@ import {
 import { resolveRequesterToolPolicies } from "../agents/requester-tool-policy.js";
 import type { PreparedRootedExecutionCapability } from "../agents/rooted-run-params.js";
 import { resolveSandboxRuntimeStatus } from "../agents/sandbox/runtime-status.js";
+import { createScheduledMessageInvocationAdmission } from "../agents/scheduled-message-invocation.js";
 import { resolveScheduledToolCallerContext } from "../agents/scheduled-tool-policy.js";
 import { buildDeclaredToolAllowlistContext } from "../agents/tool-policy-declared-context.js";
 import { filterToolsByPolicy } from "../agents/tool-policy-match.js";
@@ -44,6 +45,7 @@ import {
   type CronToolsAllowCaptureRef,
 } from "../agents/tools/cron-tool.js";
 import { createChannelQuestionPromptDelivery } from "../agents/tools/question-prompt-send.js";
+import { prepareSessionPortalToolTarget } from "../agents/tools/session-portal-target.js";
 import type { SourceReplyDeliveryMode } from "../auto-reply/get-reply-options.types.js";
 import type { ConversationReadInvocationOrigin } from "../channels/plugins/conversation-read-origin.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -93,6 +95,8 @@ export function resolveGatewayScopedTools(
      * the loopback server. Run-contract tools re-check it before they write.
      */
     isGrantCurrent?: () => boolean;
+    /** Authenticated standalone invocation lifetime supplied by its HTTP/RPC owner. */
+    assertInvocationCurrent?: () => void;
     excludeToolNames?: Iterable<string>;
     /** Server-minted coding tools that must be mediated through the loopback surface. */
     mediatedToolNames?: Iterable<string>;
@@ -124,27 +128,6 @@ export function resolveGatewayScopedTools(
         agentId: params.runtimePolicyAgentId,
       }).sessionAgentId
     : sessionAgentId;
-  const {
-    agentId: resolvedPolicyAgentId,
-    globalPolicy,
-    globalProviderPolicy,
-    agentPolicy,
-    agentProviderPolicy,
-    profile,
-    providerProfile,
-    profileAlsoAllow,
-    providerProfileAlsoAllow,
-    gatewayConfigReadAllowed,
-  } = resolveEffectiveToolPolicy({
-    config: params.cfg,
-    sessionKey: runtimePolicySessionKey,
-    agentId: runtimePolicyAgentId,
-    modelProvider: params.modelProvider,
-    modelId: params.modelId,
-  });
-  const policyAgentId = resolvedPolicyAgentId ?? runtimePolicyAgentId;
-  const profilePolicy = resolveToolProfilePolicy(profile);
-  const providerProfilePolicy = resolveToolProfilePolicy(providerProfile);
   const surface = params.surface ?? "http";
   const nodeExecSurface = surface === "loopback" && params.includeNodeExecTool === true;
   const gatewayRequestedTools = params.gatewayRequestedTools ?? [];
@@ -160,16 +143,44 @@ export function resolveGatewayScopedTools(
       ? "message_tool_only"
       : undefined);
   const runtimeAlsoAllow = sourceReplyDeliveryMode === "message_tool_only" ? ["message"] : [];
-  const profilePolicyWithAlsoAllow = mergeAlsoAllowPolicy(profilePolicy, [
-    ...(profileAlsoAllow ?? []),
-    ...gatewayRequestedTools,
-    ...runtimeAlsoAllow,
-  ]);
-  const providerProfilePolicyWithAlsoAllow = mergeAlsoAllowPolicy(providerProfilePolicy, [
-    ...(providerProfileAlsoAllow ?? []),
-    ...gatewayRequestedTools,
-    ...runtimeAlsoAllow,
-  ]);
+  function resolveConfiguredToolPolicies(config: OpenClawConfig) {
+    const effective = resolveEffectiveToolPolicy({
+      config,
+      sessionKey: runtimePolicySessionKey,
+      agentId: runtimePolicyAgentId,
+      modelProvider: params.modelProvider,
+      modelId: params.modelId,
+    });
+    const profilePolicy = resolveToolProfilePolicy(effective.profile);
+    const providerProfilePolicy = resolveToolProfilePolicy(effective.providerProfile);
+    return {
+      ...effective,
+      profilePolicy,
+      providerProfilePolicy,
+      profilePolicyWithAlsoAllow: mergeAlsoAllowPolicy(profilePolicy, [
+        ...(effective.profileAlsoAllow ?? []),
+        ...gatewayRequestedTools,
+        ...runtimeAlsoAllow,
+      ]),
+      providerProfilePolicyWithAlsoAllow: mergeAlsoAllowPolicy(providerProfilePolicy, [
+        ...(effective.providerProfileAlsoAllow ?? []),
+        ...gatewayRequestedTools,
+        ...runtimeAlsoAllow,
+      ]),
+    };
+  }
+  const configuredToolPolicies = resolveConfiguredToolPolicies(params.cfg);
+  const {
+    agentId: resolvedPolicyAgentId,
+    globalPolicy,
+    globalProviderPolicy,
+    agentPolicy,
+    agentProviderPolicy,
+    profilePolicy,
+    providerProfilePolicy,
+    gatewayConfigReadAllowed,
+  } = configuredToolPolicies;
+  const policyAgentId = resolvedPolicyAgentId ?? runtimePolicyAgentId;
   const senderId = params.channelContext?.sender?.id;
   // Only immutable Gateway-launched grants can opt into node exec. Match the
   // embedded runner's wildcard sender policy while preserving owner WebChat.
@@ -225,6 +236,14 @@ export function resolveGatewayScopedTools(
     ),
   );
   const gatewayToolsCfg = params.cfg.gateway?.tools;
+  const sessionPortalTarget =
+    surface === "loopback" && params.senderIsOwner === false && !sandboxed
+      ? prepareSessionPortalToolTarget({
+          sessionKey: params.sessionKey,
+          agentId: sessionAgentId,
+          sessionId: params.sessionId,
+        })
+      : undefined;
   const defaultGatewayDeny =
     surface === "http"
       ? DEFAULT_GATEWAY_HTTP_TOOL_DENY.filter(
@@ -238,7 +257,7 @@ export function resolveGatewayScopedTools(
       : [];
   const ownerOnlyGatewayDeny =
     params.senderIsOwner === false || (surface === "http" && params.senderIsOwner !== true)
-      ? [...GATEWAY_OWNER_ONLY_CORE_TOOLS]
+      ? GATEWAY_OWNER_ONLY_CORE_TOOLS.filter((name) => name !== "portal" || !sessionPortalTarget)
       : [];
   // HTTP callers start with additional surface denies because they cross auth only.
   const workspaceDir =
@@ -300,13 +319,31 @@ export function resolveGatewayScopedTools(
   };
   const swarmCollectorContext = resolveSwarmCollectorToolContext(swarmCollectorAdmission);
   const openClawTools = createOpenClawTools({
+    sessionPortalTarget,
     gatewayConfigReadAllowed,
     agentSessionKey: params.sessionKey,
     messageToolTurnCapability:
       surface === "loopback" && params.messageActionTurnCapability
         ? { token: params.messageActionTurnCapability, sessionKey: runtimePolicySessionKey }
         : undefined,
+    admitScheduledMessageInvocation: params.messageActionTurnCapability
+      ? createScheduledMessageInvocationAdmission({
+          config: params.cfg,
+          isAllowed: (config): boolean =>
+            tools.some((tool) => tool.name === "message") &&
+            filterGatewayToolPolicies(config).some((tool) => tool.name === "message"),
+        })
+      : undefined,
     runId: params.runId,
+    assertInvocationCurrent:
+      params.assertInvocationCurrent || params.isGrantCurrent
+        ? () => {
+            params.assertInvocationCurrent?.();
+            if (params.isGrantCurrent && !params.isGrantCurrent()) {
+              throw new Error("Gateway tool invocation grant is no longer active");
+            }
+          }
+        : undefined,
     ...(swarmCollectorContext
       ? {
           swarmCollector: true,
@@ -571,40 +608,47 @@ export function resolveGatewayScopedTools(
 
   const toolsForMessageProvider = filterToolsByMessageProvider(allTools, params.messageProvider);
   let nativeCreatorTools = (params.nativeCronCreatorToolAllowlist ?? []).map((name) => ({ name }));
-  const policyFiltered = applyToolPolicyPipeline({
-    tools: toolsForMessageProvider,
-    toolMeta: (tool: AnyAgentTool) => getPluginToolMeta(tool),
-    warn: logWarn,
-    steps: [
-      ...buildDefaultToolPolicyPipelineSteps({
-        profilePolicy: profilePolicyWithAlsoAllow,
-        profile,
-        profileUnavailableCoreWarningAllowlist: profilePolicy?.allow,
-        providerProfilePolicy: providerProfilePolicyWithAlsoAllow,
-        providerProfile,
-        providerProfileUnavailableCoreWarningAllowlist: providerProfilePolicy?.allow,
-        globalPolicy,
-        globalProviderPolicy,
-        agentPolicy,
-        agentProviderPolicy,
-        groupPolicy,
-        senderPolicy,
-        agentId: policyAgentId,
-      }),
-      { policy: sandboxPolicy, label: "sandbox tools.allow" },
-      { policy: subagentPolicy, label: "subagent tools.allow" },
-      { policy: inheritedToolPolicy, label: "inherited tools" },
-    ],
-    declaredToolAllowlist: buildDeclaredToolAllowlistContext({
-      config: params.cfg,
-      workspaceDir,
-      toolDenylist: explicitDenylist,
-    }),
-    // Native initialization reports availability; the same creator policies must
-    // also allow those capabilities before an automation may inherit them.
-    onFilter: ({ policy }) => {
-      nativeCreatorTools = filterToolsByPolicy(nativeCreatorTools, policy);
-    },
+  const declaredToolAllowlist = buildDeclaredToolAllowlistContext({
+    config: params.cfg,
+    workspaceDir,
+    toolDenylist: explicitDenylist,
+  });
+  function filterGatewayToolPolicies(
+    config: OpenClawConfig,
+    onFilter?: Parameters<typeof applyToolPolicyPipeline>[0]["onFilter"],
+  ): AnyAgentTool[] {
+    const current =
+      config === params.cfg ? configuredToolPolicies : resolveConfiguredToolPolicies(config);
+    return applyToolPolicyPipeline({
+      tools: toolsForMessageProvider,
+      toolMeta: (tool: AnyAgentTool) => getPluginToolMeta(tool),
+      warn: logWarn,
+      steps: [
+        ...buildDefaultToolPolicyPipelineSteps({
+          profilePolicy: current.profilePolicyWithAlsoAllow,
+          profile: current.profile,
+          profileUnavailableCoreWarningAllowlist: current.profilePolicy?.allow,
+          providerProfilePolicy: current.providerProfilePolicyWithAlsoAllow,
+          providerProfile: current.providerProfile,
+          providerProfileUnavailableCoreWarningAllowlist: current.providerProfilePolicy?.allow,
+          globalPolicy: current.globalPolicy,
+          globalProviderPolicy: current.globalProviderPolicy,
+          agentPolicy: current.agentPolicy,
+          agentProviderPolicy: current.agentProviderPolicy,
+          groupPolicy,
+          senderPolicy,
+          agentId: policyAgentId,
+        }),
+        { policy: sandboxPolicy, label: "sandbox tools.allow" },
+        { policy: subagentPolicy, label: "subagent tools.allow" },
+        { policy: inheritedToolPolicy, label: "inherited tools" },
+      ],
+      declaredToolAllowlist,
+      onFilter,
+    });
+  }
+  const policyFiltered = filterGatewayToolPolicies(params.cfg, ({ policy }) => {
+    nativeCreatorTools = filterToolsByPolicy(nativeCreatorTools, policy);
   });
 
   const gatewayDenySet = new Set(

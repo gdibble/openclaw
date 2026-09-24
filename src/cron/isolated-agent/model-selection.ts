@@ -45,7 +45,7 @@ type CronModelSelectionOwner = Pick<
 type ResolveCronModelSelectionParams = {
   cfg: OpenClawConfig;
   owner?: CronModelSelectionOwner;
-  agentConfigOverride?: Pick<AgentConfig, "model" | "subagents">;
+  agentConfigOverride?: Pick<AgentConfig, "model" | "subagents" | "runtime">;
   sessionEntry: CronSessionModelOverrides;
   payload: CronJob["payload"];
   isGmailHook: boolean;
@@ -225,6 +225,7 @@ export async function resolveCronModelSelection(
   });
   const resolvedDefault = resolveConfiguredModelRef({
     cfg: cfgWithAgentDefaults,
+    agentId: ownerAgentId,
     defaultProvider: DEFAULT_PROVIDER,
     defaultModel: DEFAULT_MODEL,
     manifestPlugins: owner.metadataSnapshot,
@@ -234,7 +235,7 @@ export async function resolveCronModelSelection(
     cfg: owner.config,
     catalog: owner.modelCatalog.entries,
     defaultProvider: resolvedDefault.provider,
-    defaultModel: resolvedDefault.model,
+    defaultModel: resolvedDefault,
     agentId: ownerAgentId,
     manifestPlugins: owner.metadataSnapshot,
   };

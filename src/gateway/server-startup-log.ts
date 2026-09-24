@@ -3,7 +3,7 @@
 import { normalizeSortedUniqueStringEntries } from "@openclaw/normalization-core/string-normalization";
 import chalk from "chalk";
 import { sanitizeForLog } from "../../packages/terminal-core/src/ansi.js";
-import { tryResolveLegacyCompatibilityAgentId } from "../agents/agent-scope.js";
+import { tryResolveAmbientOwnerAgentId } from "../agents/agent-scope-config.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { formatFastModeValue, resolveFastModeState } from "../agents/fast-mode.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.types.js";
@@ -16,6 +16,8 @@ import { resolveThinkingDefault } from "../agents/model-thinking-default.js";
 import type { AmbientEnvTriggerPolicy } from "../channels/config-presence.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { ensureSqliteLibrarySelected } from "../infra/bun-sqlite-library.js";
+import { getTrackedWorkerLifecycleSnapshot } from "../infra/worker-cpu.js";
+import { getWorkerComputeCapacity } from "../infra/worker-task-capacity.js";
 import { getResolvedLoggerSettings } from "../logging.js";
 import type { PluginManifestRecord } from "../plugins/manifest-registry.js";
 import { collectEnabledInsecureOrDangerousFlagsFromCurrentSnapshot } from "../security/dangerous-config-flags-current.js";
@@ -38,6 +40,7 @@ export async function logGatewayStartup(params: {
 }) {
   const { provider: agentProvider, model: agentModel } = resolveConfiguredModelRef({
     cfg: params.cfg,
+    agentId: tryResolveAmbientOwnerAgentId(params.cfg),
     defaultProvider: DEFAULT_PROVIDER,
     defaultModel: DEFAULT_MODEL,
   });
@@ -58,6 +61,25 @@ export async function logGatewayStartup(params: {
   );
   params.log.info(`log file: ${getResolvedLoggerSettings().file}`);
   const sqliteLibrary = ensureSqliteLibrarySelected();
+  params.log.info(
+    `native runtime: ${JSON.stringify({
+      pid: process.pid,
+      platform: process.platform,
+      arch: process.arch,
+      node: process.versions.node,
+      bun: process.versions.bun,
+      v8: process.versions.v8,
+      uv: process.versions.uv,
+      openssl: process.versions.openssl,
+      sqlite: sqliteLibrary.source === "runtime" ? process.versions.sqlite : sqliteLibrary.version,
+    })}`,
+  );
+  params.log.info(
+    `worker startup state: ${JSON.stringify({
+      ...getTrackedWorkerLifecycleSnapshot(),
+      compute: getWorkerComputeCapacity().getSnapshot(),
+    })}`,
+  );
   if (sqliteLibrary.source !== "runtime") {
     params.log.info(
       `SQLite: using ${sanitizeForLog(sqliteLibrary.path)} (${sqliteLibrary.version}, extension loading enabled)`,
@@ -124,7 +146,7 @@ export function formatAgentModelStartupDetails(params: {
   provider: string;
   model: string;
 }): string {
-  const soleAgentId = tryResolveLegacyCompatibilityAgentId(params.cfg);
+  const soleAgentId = tryResolveAmbientOwnerAgentId(params.cfg);
   let thinking = resolveConfiguredThinkingDefaultCore({ ...params, agentId: soleAgentId });
   if (thinking === undefined) {
     const configuredCatalog = buildConfiguredModelCatalog({ cfg: params.cfg });

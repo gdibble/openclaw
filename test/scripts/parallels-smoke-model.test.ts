@@ -69,6 +69,11 @@ import {
   runParallelsPrerequisiteEval,
 } from "../../scripts/e2e/parallels/provider-auth-prerequisite.mjs";
 import { parseArgs as parseWindowsSmokeArgs } from "../../scripts/e2e/parallels/windows-smoke.ts";
+import { scriptProcessEntrypoints } from "../../scripts/script-process-runtime.test-support.js";
+import {
+  resolveRuntimeWorkerArgv,
+  resolveRuntimeWorkerUrl,
+} from "../../src/infra/runtime-worker-url.js";
 import { withEnv } from "../../src/test-utils/env.js";
 import { resolveTestNodeExecPath, spawnNodeEvalSync } from "../../src/test-utils/node-process.js";
 import { cleanupTempDirs, makeTempDir } from "../helpers/temp-dir.js";
@@ -416,17 +421,16 @@ function drainableProcessTreeScript(delayMs: number): string {
   const descendantScript = `const { writeFileSync } = require('node:fs'); process.on('SIGTERM', () => setTimeout(() => { writeFileSync(process.env.DRAIN_FILE, 'drained'); process.exit(0); }, ${delayMs})); writeFileSync(process.env.READY_FILE, 'ready'); setInterval(() => {}, 1000);`;
   return `
 const { spawn } = require('node:child_process');
-const { existsSync, watch } = require('node:fs');
-const { dirname } = require('node:path');
+const { existsSync } = require('node:fs');
 process.on('SIGTERM', () => process.exit(0));
 let started = false;
 const start = () => {
   if (started || !existsSync(process.env.DEADLINE_FILE)) return;
   started = true;
-  watcher.close();
+  clearInterval(probe);
   spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { env: process.env, stdio: 'ignore' });
 };
-const watcher = watch(dirname(process.env.DEADLINE_FILE), start);
+const probe = setInterval(start, 5);
 start();
 setInterval(() => {}, 1000);
 `;
@@ -450,14 +454,14 @@ if (fs.readFileSync(owner, 'utf8') === String(process.pid)) {
     globalThis.setTimeout = schedule;
     return schedule(() => {
       let released = false;
+      let probe;
       const release = () => {
         if (released || !fs.existsSync(process.env.READY_FILE)) return;
         released = true;
-        watcher.close();
+        clearInterval(probe);
         callback(...args);
       };
-      const watcher = fs.watch(path.dirname(process.env.READY_FILE), { persistent: false }, release);
-      watcher.once('error', (error) => { throw error; });
+      probe = setInterval(release, 5);
       fs.writeFileSync(process.env.DEADLINE_FILE, 'elapsed');
       release();
     }, ms);
@@ -476,10 +480,10 @@ function createSignaledHostCommandFixture() {
   const runnerPath = join(tempDir, "runner.mjs");
   const readyPath = join(tempDir, "ready");
   const grandchildPidPath = join(tempDir, "grandchild.pid");
-  const hostCommandUrl = pathToFileURL(join(process.cwd(), TS_PATHS.hostCommand)).href;
+  const hostCommandUrl = resolveRuntimeWorkerUrl(scriptProcessEntrypoints.parallelsHostCommand);
   writeFileSync(
     runnerPath,
-    `import { run } from ${JSON.stringify(hostCommandUrl)};
+    `import { run } from ${JSON.stringify(hostCommandUrl.href)};
 run(process.execPath, ['-e', ${JSON.stringify(SIGNAL_PARENT_SCRIPT)}], {
   check: false,
   env: { ...process.env, OPENCLAW_TEST_GRANDCHILD_PID: ${JSON.stringify(grandchildPidPath)}, OPENCLAW_TEST_READY_FILE: ${JSON.stringify(readyPath)} },
@@ -490,11 +494,15 @@ run(process.execPath, ['-e', ${JSON.stringify(SIGNAL_PARENT_SCRIPT)}], {
   return {
     grandchildPidPath,
     readyPath,
-    runner: spawn(testNodeExecPath, ["--import", "tsx", runnerPath], {
-      cwd: process.cwd(),
-      detached: true,
-      stdio: "ignore",
-    }),
+    runner: spawn(
+      testNodeExecPath,
+      [...resolveRuntimeWorkerArgv(hostCommandUrl, testNodeExecPath).slice(0, -1), runnerPath],
+      {
+        cwd: process.cwd(),
+        detached: true,
+        stdio: "ignore",
+      },
+    ),
   };
 }
 
@@ -1307,9 +1315,13 @@ if (commandArgs[0] === "list") {
       const result = spawnSync(
         testNodeExecPath,
         [
-          "--import",
-          "tsx",
-          TS_PATHS.macos,
+          // Darwin exercises the source-relative Python transport beside the script.
+          ...(process.platform === "darwin"
+            ? ["--import", "tsx", TS_PATHS.macos]
+            : resolveRuntimeWorkerArgv(
+                resolveRuntimeWorkerUrl(scriptProcessEntrypoints.macosSmoke),
+                testNodeExecPath,
+              )),
           "--mode",
           "upgrade",
           "--latest-version",
