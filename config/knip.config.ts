@@ -26,10 +26,10 @@ const repositoryScriptEntries = [
   "src/node-host/mac-worker-entry.ts!",
   // CI imports this selector from its trusted harness inside an inline Node script.
   ".github/actions/git-owner/test-prerequisites.mjs!",
+  // The frozen Node compatibility action invokes this exact-candidate repair by path.
+  ".github/actions/frozen-node-test-compat/apply.mjs!",
   // The compiler below exposes this workflow's inline and generated-config imports.
   ".github/workflows/plugin-prerelease.yml!",
-  // mobile-release-authority invokes this helper from composite-action YAML.
-  ".github/actions/mobile-release-authority/authority.mjs!",
   // setup-node-env invokes this helper from composite-action YAML.
   ".github/actions/setup-node-env/dependency-fingerprint.mjs!",
   ".github/actions/setup-node-env/seed-bun-from-image.mjs!",
@@ -47,6 +47,8 @@ const repositoryScriptEntries = [
   "scripts/check-live-cache.ts!",
   "scripts/check-package-dist-imports.mjs!",
   "scripts/check-plugin-sdk-exports.mts!",
+  // Declaration preparation and boundary checks launch this compiler worker by path.
+  "scripts/compile-extension-boundary.mts!",
   // openclaw-performance.yml invokes the paired benchmark CLI by path.
   "scripts/vitest-pair-benchmark.mts!",
   // Cloudflare deployment template: wrangler bundles the Worker from this entry.
@@ -77,6 +79,8 @@ const repositoryScriptEntries = [
   "scripts/e2e/lib/codex-on-demand/doctor-checks.mjs!",
   "scripts/e2e/lib/config-reload/assert-log.mjs!",
   "scripts/e2e/lib/config-reload/mutate-metadata.mjs!",
+  "scripts/e2e/lib/container-image-upgrade/assert-launch.mjs!",
+  "scripts/e2e/lib/container-image-upgrade/fixture.mjs!",
   "scripts/e2e/lib/docker-artifact-proof/write-identities.ts!",
   "scripts/e2e/lib/docker-stats/assert-resource-ceiling.mjs!",
   "scripts/e2e/lib/doctor-install-switch/assert-exec-start.mjs!",
@@ -119,13 +123,19 @@ const repositoryScriptEntries = [
   "scripts/e2e/lib/upgrade-survivor/abandoned-update.mjs!",
   // backup-rollback.sh invokes capture and verification through this CLI.
   "scripts/e2e/lib/upgrade-survivor/backup-rollback.mjs!",
+  "scripts/e2e/lib/upgrade-survivor/channel-owner-policy.mjs!",
   "scripts/e2e/lib/upgrade-survivor/config-parking.mjs!",
   "scripts/e2e/lib/upgrade-survivor/custom-plugin-siblings.mjs!",
   // Capture runs in the container; sanitization runs only on the trusted host.
   "scripts/e2e/lib/upgrade-survivor/diagnostics.mjs!",
   "scripts/upgrade-survivor-diagnostics.mjs!",
+  // run.sh invokes this CLI and preloads it into updater/Doctor children.
+  "scripts/e2e/lib/upgrade-survivor/dreaming-cron.mjs!",
   "scripts/e2e/lib/upgrade-survivor/formerly-bundled-plugin-doctor.mjs!",
+  "scripts/e2e/lib/upgrade-survivor/legacy-operator-restored-index.mjs!",
   "scripts/e2e/lib/upgrade-survivor/missing-configured-plugin-migration.mjs!",
+  // run.sh starts this persistent native peer as a separate process.
+  "scripts/e2e/lib/upgrade-survivor/native-assignment-app-server.mjs!",
   "scripts/e2e/lib/upgrade-survivor/probe-gateway.mjs!",
   "scripts/e2e/lib/upgrade-survivor/probe-volume-gateway.mjs!",
   "scripts/e2e/lib/upgrade-survivor/projects-doctor.mjs!",
@@ -136,10 +146,10 @@ const repositoryScriptEntries = [
   "scripts/e2e/lib/upgrade-survivor/schema-expectation.mjs!",
   // update-restart-auth.sh installs this manager/launch adapter into the fixture bin directory.
   "scripts/e2e/lib/upgrade-survivor/systemd-fixture.mjs!",
-  "scripts/e2e/lib/upgrade-survivor/taskflow-restoration.mjs!",
   // The first-hop shell executes the packaged admission entry probe by path.
   "scripts/e2e/lib/upgrade-survivor/update-admission-entry-probe.mjs!",
   "scripts/e2e/lib/upgrade-survivor/worker-cell-package.mjs!",
+  "scripts/e2e/lib/upgrade-survivor/update-report-recovery.mjs!",
   "scripts/e2e/lib/upgrade-survivor/mobile-pairing-client.mts!",
   "scripts/e2e/lib/upgrade-survivor/watchos-direct-node.mjs!",
   "scripts/embedded-run-abort-leak.ts!",
@@ -151,6 +161,8 @@ const repositoryScriptEntries = [
   "scripts/ios-screenshot-evidence.mjs!",
   "scripts/ios-release-cut.ts!",
   "scripts/ios-release-plan.ts!",
+  // Android Fastlane invokes this planner and its pre-upload validation by path.
+  "scripts/android-release-plan.ts!",
   "scripts/ios-release-signing.mts!",
   "scripts/lib/docker-plugin-selection.mjs!",
   // The frozen compatibility shell invokes the source CLI and imports trusted tooling.
@@ -195,6 +207,8 @@ const repositoryScriptEntries = [
   "scripts/pr-lib/merge-legacy-refusal.mjs!",
   // merge.sh and merge-outcome.sh execute refusal qualification by path.
   "scripts/pr-lib/merge-pre-dispatch-refusal.mjs!",
+  // merge.sh verifies prior exact-head CI evidence through this CLI by path.
+  "scripts/pr-lib/merge-prior-ci.mjs!",
   // merge-outcome.sh launches the REST adapter as a standalone Node CLI.
   "scripts/pr-lib/merge-rest.mjs!",
   "scripts/pr-lib/review-artifacts.mjs!",
@@ -219,6 +233,9 @@ const repositoryScriptEntries = [
   // The isolated Vitest adapter executes this entry by path inside its container.
   "scripts/lib/vitest-isolated-entry.mts",
   "scripts/secrets/openclaw-bws-resolver.mjs!",
+  // Security Review stages these entrypoints from isolated checkout attempts.
+  "scripts/github/security-review-event.mjs!",
+  "scripts/github/security-review.mjs!",
   "scripts/sync-labels.ts!",
   "scripts/test-built-bundled-channel-entry-smoke.mts!",
   // Native shell UI tests connect to this manually launched loopback Gateway fixture.
@@ -331,7 +348,7 @@ const rootEntries = [
   "security/opengrep/rules/ghsa-82g8-464f-2mv7/skill-env.ts!",
   "security/opengrep/rules/ghsa-fv94-qvg8-xqpw/ssh-sandbox-upload.js!",
   "security/opengrep/rules/ghsa-fv94-qvg8-xqpw/ssh-sandbox-upload.ts!",
-  "openclaw.mjs!",
+  "{openclaw,docker-entrypoint}.mjs!",
   // update-command-node-runtime-resolution loads this package-root module by absolute URL.
   "node-runtime-recovery.mjs!",
   "src/index.ts!",
@@ -340,6 +357,7 @@ const rootEntries = [
   "src/docker-healthcheck.ts!",
   // Deployed in the worker archive and launched by path, without a static host import.
   "src/worker/worker-deploy-entry.ts!",
+  "src/worker/worker-deploy-file-tool-planning.ts!",
   "src/worker/worker-deploy-image-processor.ts!",
   "src/worker/worker-deploy-sqlite-store.ts!",
   "src/worker/workspace-rsync-receiver.ts!",
@@ -361,8 +379,6 @@ const rootEntries = [
   "scripts/release-verify-publish.ts!",
   // Spawned by the agent concurrency benchmark; no static import edge exists.
   "scripts/bench-agent-concurrency-worker.ts!",
-  // Spawned by the durable task registry churn benchmark in a fresh GC-enabled process.
-  "scripts/bench-task-registry-sqlite-worker.ts!",
   "scripts/bench-sqlite-reliability.ts!",
   "scripts/bench-cron-session-reaper.ts!",
   "scripts/bench-codex-catalog-pages.ts!",
@@ -380,8 +396,6 @@ const rootEntries = [
   "src/agents/subagents/registry/subagent-registry.runtime.ts!",
   // Loaded lazily by the sweeper only when a receipt-bearing or interrupted row is found.
   "src/agents/subagents/registry/subagent-registry-restart-recovery.ts!",
-  // Task cancellation loads this control facade by string path to avoid a registry cycle.
-  "src/tasks/task-registry-control.runtime.ts!",
   // Reply dispatch and Gateway startup consume this namespace through loadGetReplyFromConfigRuntime.
   "src/auto-reply/reply/get-reply-from-config.runtime.ts!",
   // Command attempts consume this namespace through runtime-loaders.ts's Promise.all preload.
@@ -493,7 +507,6 @@ const bundledPluginIgnoredRuntimeDependencies = [
 const rootBundledPluginRuntimeDependencies = [
   "@anthropic-ai/sdk",
   "@google/genai",
-  "@grammyjs/runner",
   "@grammyjs/transformer-throttler",
   "@homebridge/ciao",
   "@mozilla/readability",
@@ -647,6 +660,9 @@ const config = {
     // Registry facades retain direct registration/reset compatibility seams used by focused
     // tests; the full-tree scan still audits every named export against those consumers.
     "src/agents/harness/registry.ts": ["exports"],
+    // Focused outbox tests seed and recover rows through these kernels; production
+    // reaches them only through the agent database worker's command dispatcher.
+    "src/agents/harness/context-engine-turn-outbox.ts": ["exports"],
     // Runtime reason values are exported now so protocol schemas can derive from one tuple later.
     "src/agents/failover/signal.ts": ["exports"],
     "src/context-engine/registry.ts": ["exports", "types"],
@@ -936,6 +952,8 @@ const config = {
     [`${BUNDLED_PLUGIN_ROOT_DIR}/qianfan`]: bundledPluginWorkspace(),
     [`${BUNDLED_PLUGIN_ROOT_DIR}/qwen`]: bundledPluginWorkspace(),
     [`${BUNDLED_PLUGIN_ROOT_DIR}/qa-lab`]: bundledPluginWorkspace([
+      // The private QA Gateway package profile builds this entry by path.
+      "gateway-entry.ts!",
       // Core loads the CLI facade by basename; QA Lab also owns a nested Vite app.
       "cli.ts!",
       "web/index.html!",

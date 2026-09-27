@@ -640,6 +640,15 @@ const enSettings = {
       discover: "On this Gateway",
       description: "Save credentials for this agent. Choose the active model separately.",
       done: "Provider credentials saved.",
+      missingSelection:
+        "The account selected for {model} is no longer available. Connect or choose an account to use with this model.",
+      chooseAccount: "Choose account",
+      useAccount: "Use this account",
+      useAccountDescription:
+        "Test {model} with this account and use it for this agent's default. Conversations with their own account selection keep it.",
+      activated: "Account verified and selected for this agent's default model.",
+      selectionChanged:
+        "The selected model or account changed. Close this dialog and choose again.",
       finishing: "Credentials are being saved. Wait for the result.",
       sessionExpired:
         "This sign-in session ended. Close this dialog and refresh Models to check the result.",
@@ -1311,7 +1320,6 @@ const enSettings = {
       agentQuestion: "Agent question",
       humanMentioned: "Someone mentions me",
       scheduledTaskFailed: "Scheduled task failed",
-      backgroundTaskFailed: "Background task failed",
       lockScreenDetail: "Lock-screen detail",
       lockScreenDetailHint: "Private hides names; detailed content is sanitized.",
       private: "Private",

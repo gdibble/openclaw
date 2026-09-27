@@ -194,6 +194,7 @@ export async function startOrResumeThread(
           restrictedToolSurface,
           restrictedToolSurfaceInheritedMcpServerNames,
           shellEnvironment: params.shellEnvironment,
+          shellPathPrepend: params.shellPathPrepend,
           disableLoginShell: params.disableLoginShell,
           environmentSelection: params.environmentSelection,
           provisionalAppIds: pluginThreadConfig?.provisionalAppIds,
@@ -331,7 +332,6 @@ export async function startOrResumeThread(
         connectionClass: params.appServer.connectionClass,
       });
       await clearCurrentBinding("rotating a stale thread binding");
-      binding = undefined;
     }
     if (
       binding?.threadId &&
@@ -351,7 +351,6 @@ export async function startOrResumeThread(
         },
       );
       await clearCurrentBinding("rotating a GPT-5.6 multi-agent thread binding");
-      binding = undefined;
     }
     selectionBinding = binding;
     // Capability read failures use managed search for this turn but must not
@@ -544,7 +543,6 @@ export async function startOrResumeThread(
           },
         );
         await clearCurrentBinding("rotating a stale thread binding");
-        binding = undefined;
         rotatedContextEngineBinding = true;
       }
     }
@@ -560,7 +558,6 @@ export async function startOrResumeThread(
         threadId: binding.threadId,
       });
       await clearCurrentBinding("rotating a stale thread binding");
-      binding = undefined;
     }
     if (
       binding?.threadId &&
@@ -574,7 +571,6 @@ export async function startOrResumeThread(
         },
       );
       await clearCurrentBinding("rotating a stale thread binding");
-      binding = undefined;
     }
     if (binding?.threadId) {
       const pluginBindingStale = isCodexPluginThreadBindingStale({
@@ -592,7 +588,6 @@ export async function startOrResumeThread(
           },
         );
         await clearCurrentBinding("rotating a stale thread binding");
-        binding = undefined;
       }
     }
     if (binding?.threadId) {
@@ -609,7 +604,6 @@ export async function startOrResumeThread(
           },
         );
         await clearCurrentBinding("rotating a stale thread binding");
-        binding = undefined;
       }
     }
     if (binding?.threadId) {

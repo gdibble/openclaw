@@ -1,4 +1,3 @@
-// Control UI view renders usage screen content.
 import { html, nothing } from "lit";
 import {
   addCostUsageTotals,
@@ -737,7 +736,7 @@ export function renderUsage(props: UsageProps) {
                         displayActions.onSessionSortChange,
                         displayActions.onSessionSortDirChange,
                         displayActions.onSessionsTabChange,
-                        display.visibleColumns,
+                        undefined,
                         totalSessions,
                         filterActions.onClearSessions,
                       )}
@@ -747,34 +746,10 @@ export function renderUsage(props: UsageProps) {
                         ? html`<div class="usage-grid-column">
                             ${renderSessionDetailPanel(
                               primarySelectedEntry,
-                              detail.timeSeries,
-                              detail.timeSeriesLoading,
-                              detail.timeSeriesStatus,
-                              detail.timeSeriesMode,
-                              detailActions.onTimeSeriesModeChange,
-                              detail.timeSeriesBreakdownMode,
-                              detailActions.onTimeSeriesBreakdownChange,
-                              detail.timeSeriesCursorStart,
-                              detail.timeSeriesCursorEnd,
-                              detailActions.onTimeSeriesCursorRangeChange,
-                              filters.startDate,
-                              filters.endDate,
-                              filters.selectedDays,
-                              filters.timeZone,
-                              detail.sessionLogs,
-                              detail.sessionLogsLoading,
-                              detail.sessionLogsStatus,
-                              detail.sessionLogsExpanded,
-                              detailActions.onToggleSessionLogsExpanded,
-                              detail.logFilters,
-                              detailActions.onLogFilterRolesChange,
-                              detailActions.onLogFilterToolsChange,
-                              detailActions.onLogFilterHasToolsChange,
-                              detailActions.onLogFilterQueryChange,
-                              detailActions.onLogFilterClear,
-                              detail.context,
+                              detail,
+                              detailActions,
+                              filters,
                               display.contextExpanded,
-                              detailActions.onToggleContextExpanded,
                               filterActions.onClearSessions,
                             )}
                           </div>`

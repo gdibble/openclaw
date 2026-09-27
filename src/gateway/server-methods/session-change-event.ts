@@ -8,6 +8,10 @@ import { bumpGatewayAccessRevision } from "../gateway-access-revision.js";
 import { hasSessionChangeReceivers } from "../session-change-receivers.js";
 import { buildGatewaySessionSnapshot } from "../session-event-payload.js";
 import {
+  drainSessionEventPublications,
+  sessionEventPublicationRows,
+} from "../session-event-prepared-row.js";
+import {
   resolvePrivateSessionEventBroadcastScope,
   resolveSessionEventAgentScope,
   tryResolveSessionCompatibilityOwnerAgentId,
@@ -299,7 +303,7 @@ async function publishSessionChange(context: SessionChangeContext, change: Sessi
     if (change.captureFailed) {
       broadcast(false);
     } else if (query && projection) {
-      const prepared = await projection.withPreparedExactRows(
+      const prepared = await sessionEventPublicationRows(projection).withPreparedExactRows(
         () => [query],
         () => {
           broadcast(!captured || projection.isCurrent(captured));
@@ -395,6 +399,10 @@ export async function flushPendingSessionsChangedEvents(context?: object): Promi
     }
     pending.forEach(finishPendingSessionChange);
     await Promise.all(pending.flatMap((entry) => (entry.work ? [entry.work] : [])));
+    const projections = new Set(
+      pending.flatMap((entry) => getSessionRowProjection(entry.context) ?? []),
+    );
+    await Promise.all([...projections].map(drainSessionEventPublications));
   }
 }
 
