@@ -7,7 +7,8 @@ import { resolveOpenAiCompatError } from "./openai-compat-errors.js";
 
 describe("resolveOpenAiCompatError", () => {
   it("maps GatewayDrainingError to a 503 service_unavailable envelope", () => {
-    expect(resolveOpenAiCompatError(new GatewayDrainingError())).toEqual({
+    const err = new GatewayDrainingError("Gateway is draining; new tasks are not accepted");
+    expect(resolveOpenAiCompatError(err)).toEqual({
       status: 503,
       error: {
         message: "Gateway is draining; new tasks are not accepted",
