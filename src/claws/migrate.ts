@@ -32,12 +32,9 @@ import {
   validateAgentConfigKeys,
 } from "./migrate-validation.js";
 import { readSelectedWorkspaceFiles } from "./migrate-workspace-files.js";
+import { readClawInstallRecordFromDatabase } from "./provenance-read.kernel.js";
 import { readClawSecondaryReferenceTables } from "./provenance-secondary-references.js";
-import {
-  persistClawMigrationOwnership,
-  readClawInstallRecordFromDatabase,
-  readClawInstallRecords,
-} from "./provenance.js";
+import { persistClawMigrationOwnership, readClawInstallRecords } from "./provenance.js";
 import { readClawManifestFile } from "./reader.js";
 import { isPortableClawAvatar } from "./schema-portability.js";
 import type { ClawManifest, ClawOpenClawProfile } from "./types.js";
@@ -96,7 +93,6 @@ type BuiltMigration = {
   addPlan: Awaited<ReturnType<typeof buildClawAddPlan>>;
   manifest: ClawManifest;
   profile?: ClawOpenClawProfile;
-  clawMarkdownBody?: Buffer;
   packageFiles: Map<string, Buffer>;
   ownershipFiles: PersistedClawWorkspaceFile[];
 };
@@ -445,7 +441,6 @@ export async function buildClawMigrationPlan(params: {
       addPlan,
       manifest: loaded.manifest,
       ...(loaded.openClawProfile ? { profile: loaded.openClawProfile } : {}),
-      ...(loaded.clawMarkdownBody ? { clawMarkdownBody: loaded.clawMarkdownBody } : {}),
       packageFiles: projected.packageFiles,
       ownershipFiles,
     };

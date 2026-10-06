@@ -27,7 +27,9 @@ import {
 import * as archiveWorker from "./session-accessor.sqlite-archive.js";
 import type { SqliteSessionReclamationDiagnostics } from "./session-accessor.sqlite-contract.js";
 import { patchSessionEntryCore } from "./session-accessor.sqlite-entry.js";
+import type { SqliteSessionReclamationPlan } from "./session-accessor.sqlite-lifecycle-types.js";
 import * as maintenanceKick from "./session-accessor.sqlite-maintenance-kick.js";
+import { registerSessionMaintenanceProtectionTests } from "./session-accessor.sqlite-maintenance-protection.test-support.js";
 import * as maintenance from "./session-accessor.sqlite-maintenance.js";
 import {
   observeSessionMaintenancePlanningWorker,
@@ -152,7 +154,10 @@ it.each(["cold", "warm", "warm-cap", "removal"] as const)(
         );
       });
       const preservation = vi.fn(() => []);
-      const unregister = registerSessionMaintenancePreserveKeysProvider(preservation);
+      const unregister = registerSessionMaintenancePreserveKeysProvider(async () => ({
+        capture: preservation,
+        dispose() {},
+      }));
       const result = await (async () => {
         try {
           await patchSessionEntryCore(active, () => ({ label: "updated" }), {
@@ -347,11 +352,14 @@ it.each(["provider", "work-key", "work-id", "lifecycle-key", "lifecycle-id", "an
       };
       if (protection === "provider") {
         let reverse = false;
-        const unregister = registerSessionMaintenancePreserveKeysProvider(() => {
-          reverse = !reverse;
-          const keys = [protectedKey.toUpperCase(), active.sessionKey];
-          return reverse ? keys.toReversed() : keys;
-        });
+        const unregister = registerSessionMaintenancePreserveKeysProvider(async () => ({
+          capture: () => {
+            reverse = !reverse;
+            const keys = [protectedKey.toUpperCase(), active.sessionKey];
+            return reverse ? keys.toReversed() : keys;
+          },
+          dispose() {},
+        }));
         try {
           await run();
         } finally {
@@ -362,7 +370,7 @@ it.each(["provider", "work-key", "work-id", "lifecycle-key", "lifecycle-id", "an
       } else {
         const identity = protection.endsWith("-key") ? protectedKey : protectedId;
         if (protection.startsWith("lifecycle")) {
-          await runExclusiveSessionLifecycleMutation({
+          await runExclusiveSessionLifecycleMutation("archive", {
             scope: storePath,
             identities: [identity],
             run,
@@ -400,9 +408,10 @@ it("rolls back archive metadata when protection changes at planning commit", asy
       { sessionId: "stale", updatedAt: 1 },
     );
     let protectedNow = false;
-    const unregister = registerSessionMaintenancePreserveKeysProvider(() =>
-      protectedNow ? [protectedKey] : [],
-    );
+    const unregister = registerSessionMaintenancePreserveKeysProvider(async () => ({
+      capture: () => (protectedNow ? [protectedKey] : []),
+      dispose() {},
+    }));
     observeSessionMaintenancePlanningWorker({
       beforeAdmission(request) {
         const facts = request.facts;
@@ -631,8 +640,10 @@ it("publishes exact archived keys without worktrees after Worker planning", asyn
       const result = await reclamationRun.runSqliteSessionReclamation({
         diagnostics,
         forceInProcess: false,
-        plan: reclamation.createSessionMaintenancePlanningOperation({
-          databaseOptions,
+        plan: {
+          kind: "maintenance-plan",
+          databaseOptions: reclamation.resolveSessionReclamationDatabaseOptions(databaseOptions),
+          materializedPlans: [],
           input: {
             activeSessionKey: active.sessionKey,
             archiveDirectory: state.sessionsDir(),
@@ -644,12 +655,16 @@ it("publishes exact archived keys without worktrees after Worker planning", asyn
             preservation: { providerKeys: [], workIdentities: [], lifecycleIdentities: [] },
             storePath,
           },
-        }),
+        },
       });
       expect(diagnostics).toMatchObject({ workerThreadId: expect.any(Number) });
       expect(result).toMatchObject({
         kind: "maintenance-plan",
-        value: { archived: 1, archivedSessionKeys: [stale.sessionKey], entryRemovals: [] },
+        value: {
+          archived: 1,
+          archivedEntries: [{ sessionKey: stale.sessionKey, sessionId: "stale" }],
+          entryRemovals: [],
+        },
       });
       expect(published).toEqual([
         {
@@ -728,7 +743,7 @@ it.each(["no-op", "preservation", "statistics", "empty-finalization"] as const)(
       const databaseOptions = { agentId: "main", env: state.env };
       const database = openOpenClawAgentDatabase(databaseOptions);
       const originalFile = fs.statSync(database.path, { bigint: true });
-      const plan =
+      const plan: SqliteSessionReclamationPlan =
         operation === "statistics"
           ? reclamation.createSessionMaintenanceStatisticsOperation(databaseOptions)
           : operation === "empty-finalization"
@@ -738,8 +753,11 @@ it.each(["no-op", "preservation", "statistics", "empty-finalization"] as const)(
                 entries: [],
                 materializedPlans: [],
               })
-            : reclamation.createSessionMaintenancePlanningOperation({
-                databaseOptions,
+            : {
+                kind: "maintenance-plan",
+                databaseOptions:
+                  reclamation.resolveSessionReclamationDatabaseOptions(databaseOptions),
+                materializedPlans: [],
                 input: {
                   activeSessionKey: active.sessionKey,
                   archiveDirectory: state.sessionsDir(),
@@ -751,7 +769,7 @@ it.each(["no-op", "preservation", "statistics", "empty-finalization"] as const)(
                   preservation: null,
                   storePath,
                 },
-              });
+              };
       const published: unknown[] = [];
       const unsubscribe = sessionChanges.subscribe((change) => {
         const scope = "all" in change ? change.scope : change;
@@ -964,4 +982,5 @@ it("retains worker cadence for foreign writes until a committed worker backdate 
   });
 });
 
+registerSessionMaintenanceProtectionTests();
 registerSessionMaintenancePreparationTests();

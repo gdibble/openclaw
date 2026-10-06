@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { QuestionWaitAnswerResult } from "../../../packages/gateway-protocol/src/schema/questions.js";
+import { withQuestionInputAssertion } from "../../auto-reply/reply/message-injection-authority.js";
 import type { ReplyToolAuthorityOverlay } from "../../auto-reply/reply/reply-run-registry.contracts.js";
 import type { UserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.types.js";
 import { createDeferredCore } from "../../shared/deferred.js";
@@ -91,7 +92,7 @@ function reserveQuestionInput(state: PendingAgentQuestion, authority?: QuestionI
   let refused = false;
   const assertCurrent = () => {
     try {
-      authority?.assertCurrent();
+      withQuestionInputAssertion(() => authority?.assertCurrent());
       state.answerAuthority?.assertActive();
       if (pendingAgentQuestions.get(state.sessionKey) !== state) {
         throw new Error("pending question is no longer current");
@@ -300,7 +301,7 @@ async function claimQuestionAnswer(
   if (!state || state.resolving || (state.kind === "gateway" && state.cancelRequested)) {
     return false;
   }
-  params.authority?.assertCurrent();
+  withQuestionInputAssertion(() => params.authority?.assertCurrent());
   const sourceRecorder = params.sourceRecorder;
   const stagedSource = sourceRecorder?.getPendingInputMessage?.() !== undefined;
   const reservation = reserveQuestionInput(state, params.authority);
@@ -415,7 +416,7 @@ export async function cancelPendingAgentQuestionForSession(params: {
   resolvedBy: string;
   authority?: QuestionInputAuthority;
 }): Promise<boolean> {
-  params.authority?.assertCurrent();
+  withQuestionInputAssertion(() => params.authority?.assertCurrent());
   const sessionKey = params.sessionKey?.trim();
   const state = sessionKey ? pendingAgentQuestions.get(sessionKey) : undefined;
   if (!state || state.resolving) {
@@ -647,7 +648,11 @@ async function runScopedAgentHarnessQuestion(
       (result) => ({ kind: "answer" as const, result }),
       (error: unknown) => ({ kind: "answer-error" as const, error }),
     );
-    const finishAnswer = async (result: QuestionWaitAnswerResult) => {
+    const finishAnswer = async (outcome: Awaited<typeof answerOutcome>) => {
+      if (outcome.kind === "answer-error") {
+        throw outcome.error;
+      }
+      const { result } = outcome;
       const terminal =
         result.status === "pending"
           ? ((await cancel("wait-timeout")) ?? ({ status: "cancelled" } as const))
@@ -663,11 +668,8 @@ async function runScopedAgentHarnessQuestion(
         setTimeout(() => resolve({ kind: "delivery-ready" }), 0);
       }),
     ]);
-    if (beforeDelivery.kind === "answer") {
-      return await finishAnswer(beforeDelivery.result);
-    }
-    if (beforeDelivery.kind === "answer-error") {
-      throw beforeDelivery.error;
+    if (beforeDelivery.kind !== "delivery-ready") {
+      return await finishAnswer(beforeDelivery);
     }
     let consumed: boolean;
     do {
@@ -675,11 +677,7 @@ async function runScopedAgentHarnessQuestion(
     } while (!consumed && claim.isResolving());
     if (consumed) {
       // A completed registration-time claim must not expose a stale prompt.
-      const outcome = await answerOutcome;
-      if (outcome.kind === "answer-error") {
-        throw outcome.error;
-      }
-      return await finishAnswer(outcome.result);
+      return await finishAnswer(await answerOutcome);
     }
     const delivery = deliverAgentHarnessQuestionPrompt(
       params.delivery,
@@ -693,11 +691,8 @@ async function runScopedAgentHarnessQuestion(
       (error: unknown) => ({ kind: "delivery-error" as const, error }),
     );
     const first = await Promise.race([answerOutcome, deliveryOutcome]);
-    if (first.kind === "answer") {
-      return await finishAnswer(first.result);
-    }
-    if (first.kind === "answer-error") {
-      throw first.error;
+    if (first.kind === "answer" || first.kind === "answer-error") {
+      return await finishAnswer(first);
     }
     if (first.kind === "delivery-error") {
       const terminal = await cancel("prompt-delivery-failed");
@@ -706,11 +701,7 @@ async function runScopedAgentHarnessQuestion(
       }
       throw new Error("harness question prompt delivery failed", { cause: first.error });
     }
-    const terminal = await answerOutcome;
-    if (terminal.kind === "answer-error") {
-      throw terminal.error;
-    }
-    return await finishAnswer(terminal.result);
+    return await finishAnswer(await answerOutcome);
   } catch (error) {
     try {
       const terminal = await cancel(params.signal?.aborted ? "run-abort" : "harness-error");
