@@ -106,6 +106,11 @@ export const cliCleanupRetirementEntrypoints = {
     sourceWorkerName: "runtime-cleanup",
     distWorkerPath: "legacy-finalizer/src/cli/runtime-cleanup.js",
   },
+  skills: {
+    currentModuleUrl: import.meta.url,
+    sourceWorkerName: "../skills/runtime/refresh",
+    distWorkerPath: "legacy-finalizer/src/skills/runtime/refresh.js",
+  },
   database: {
     currentModuleUrl: import.meta.url,
     sourceWorkerName: "../state/openclaw-state-db-cache",
@@ -165,11 +170,6 @@ export const updateFinalizationOutputEntrypoint = {
 
 // Direct-stop children use the invocation's prepared graph before readiness starts.
 export const gatewayDirectStopEntrypoints = {
-  startupOrphanFixture: {
-    currentModuleUrl: import.meta.url,
-    sourceWorkerName: "../gateway/startup-orphan-process.test-support",
-    distWorkerPath: "gateway/startup-orphan-process.test-support.js",
-  },
   forcedCronFixture: {
     currentModuleUrl: import.meta.url,
     sourceWorkerName: "gateway-cli/run-loop.forced-cron.test-support",

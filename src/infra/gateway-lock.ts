@@ -196,15 +196,13 @@ function resolveGatewayOwnerStatusSync(
       : "alive";
   }
   // Embedded agents cover every state-writing command; maintenance roles require
-  // their exact command. Gateway classification also recognizes retitled processes.
+  // an OpenClaw command. Gateway classification also recognizes retitled processes.
   const command =
-    role === "agent-embedded"
+    role === "agent-embedded" || role === "sqlite-maintenance"
       ? undefined
-      : role === "sqlite-maintenance"
-        ? "doctor"
-        : role === "skill-workshop-apply"
-          ? "skills"
-          : "gateway";
+      : role === "skill-workshop-apply"
+        ? "skills"
+        : "gateway";
   const identity = classifyOpenClawArgv(
     args,
     command ? { command, ...identityOptions } : identityOptions,
@@ -560,7 +558,8 @@ export async function acquireGatewayLock(
             await owner.run(() =>
               assertGatewayOwnerLeaseStopped(
                 env,
-                role === "sqlite-maintenance" ? owner : undefined,
+                role === "sqlite-maintenance" || role === "agent-embedded" ? owner : undefined,
+                role === "sqlite-maintenance",
               ),
             );
             if (previousOwner) {

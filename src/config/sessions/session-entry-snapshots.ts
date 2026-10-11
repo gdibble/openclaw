@@ -6,6 +6,7 @@ import {
 } from "../../infra/kysely-sync.js";
 import type { OpenClawAgentDatabase } from "../../state/openclaw-agent-db-contract.js";
 import type { DB } from "../../state/openclaw-agent-db.generated.js";
+import type { SessionEntrySnapshotRow } from "./session-entry-storage.types.js";
 import type { SessionEntry } from "./types.js";
 
 export type SessionEntrySnapshot = {
@@ -16,11 +17,7 @@ export type SessionEntrySnapshot = {
 export type SessionEntrySnapshotField = SessionEntrySnapshot["field"];
 export type SessionEntryProjection = "full" | "list" | readonly SessionEntrySnapshotField[];
 
-export type SessionEntrySnapshotRow = {
-  session_diff_baseline_json?: string | null;
-  skills_snapshot_json?: string | null;
-  system_prompt_report_json?: string | null;
-};
+export type { SessionEntrySnapshotRow } from "./session-entry-storage.types.js";
 
 const snapshotColumns = [
   ["sessionDiffBaseline", "session_diff_baseline_json"],
@@ -121,12 +118,18 @@ export function writeSessionEntrySnapshots(
         ),
       ),
   );
-  for (const snapshot of snapshots) {
+  if (snapshots.length > 0) {
     executeSqliteQuerySync(
       database.db,
       db
         .insertInto("session_entry_snapshots")
-        .values({ session_key: sessionKey, field: snapshot.field, value_json: snapshot.valueJson })
+        .values(
+          snapshots.map((snapshot) => ({
+            session_key: sessionKey,
+            field: snapshot.field,
+            value_json: snapshot.valueJson,
+          })),
+        )
         .onConflict((conflict) =>
           conflict
             .columns(["session_key", "field"])

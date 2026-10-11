@@ -110,8 +110,8 @@ from the resident window perform no native reads; overflow discovery is the expl
 
 Source backoff settles when the whole foreground fallback request completes,
 including a bounded partial result with a continuation. Successful intermediate
-pages do not clear earlier failures. A failed recovery probe advances the existing
-backoff schedule; abandoning a request releases its probe without recording a new
+pages do not clear earlier failures. A failed recovery check advances the existing
+backoff schedule; abandoning a request releases its check without recording a new
 host failure. Background hydration keeps its separate grouped attempt and can
 walk the home to completion without consuming a foreground request's budget.
 
@@ -569,9 +569,11 @@ same child result after the parent replies.
 
 - The official `@openclaw/codex` plugin installed. Include `codex` in
   `plugins.allow` if your config uses an allowlist.
-- Managed Codex app-server `0.160.0`. The plugin ships and manages
-  `@openai/codex` `0.160.0` by default, so a `codex` command on `PATH` does not
-  affect normal startup. Explicit custom, remote, and macOS desktop-owned
+- Managed Codex app-server `0.160.0` or newer. The plugin ships
+  `@openai/codex` `0.160.0` and uses a newer stable `codex` from `PATH` only
+  after it passes a version check and an app-server handshake; see
+  [Newer installed Codex](/plugins/codex-harness-reference/app-server-transport#newer-installed-codex).
+  Explicit custom, remote, and macOS desktop-owned
   app-servers must report a parseable semantic version of `0.149.0` or newer.
   Newer versions continue with a compatibility warning and normal runtime
   validation.

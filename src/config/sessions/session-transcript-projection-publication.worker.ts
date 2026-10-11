@@ -7,10 +7,16 @@ import {
 import type {
   SqliteWorkerBackend,
   SqliteWorkerCommand,
+  SqliteWorkerStore,
 } from "../../infra/sqlite-worker-contract.js";
 import type { SqliteWorkerDatabaseContext } from "../../infra/sqlite-worker-database-context.js";
 import type { DB } from "../../state/openclaw-agent-db.generated.js";
 import { OPENCLAW_SQLITE_BUSY_TIMEOUT_MS } from "../../state/openclaw-state-db-contract.js";
+import {
+  publishUnchangedSessionTranscriptAuthority,
+  readStagedSessionTranscriptAuthority,
+  type SessionTranscriptAuthorityReceipt,
+} from "./session-transcript-authority.js";
 import {
   isSessionTranscriptIndexStatusClean,
   maintainSessionTranscriptIndexStatus,
@@ -38,7 +44,11 @@ export type TranscriptProjectionRebuildOperations = {
   };
   finalize: {
     input: { plan: PreparedSessionTranscriptProjectionMetadata; claimId: number };
-    output: { finalized: boolean; sessionKey?: string };
+    output: {
+      finalized: boolean;
+      sessionKey?: string;
+      transcriptPublication?: readonly SessionTranscriptAuthorityReceipt[];
+    };
   };
 };
 
@@ -46,6 +56,11 @@ export type TranscriptProjectionPublicationOperations = TranscriptProjectionRebu
   preflight: { input: undefined; output: ReturnType<typeof maintainSessionTranscriptIndexStatus> };
   sweep: { input: undefined; output: ReturnType<typeof maintainSessionTranscriptIndexStatus> };
 };
+
+export type ProjectionPublisher = Pick<
+  SqliteWorkerStore<TranscriptProjectionRebuildOperations>,
+  "execute"
+>;
 
 /** The canonical agent executor lends its connection for each bounded publication. */
 export function bindSqliteWorkerBackend(_input: undefined, context: SqliteWorkerDatabaseContext) {
@@ -57,7 +72,9 @@ export function bindSqliteWorkerBackend(_input: undefined, context: SqliteWorker
   function execute(
     command: SqliteWorkerCommand<TranscriptProjectionPublicationOperations>,
   ): TranscriptProjectionPublicationOperations[keyof TranscriptProjectionPublicationOperations]["output"];
-  function execute(command: SqliteWorkerCommand<TranscriptProjectionPublicationOperations>) {
+  function execute(
+    command: SqliteWorkerCommand<TranscriptProjectionPublicationOperations>,
+  ): TranscriptProjectionPublicationOperations[keyof TranscriptProjectionPublicationOperations]["output"] {
     if (
       (command.type === "preflight" || command.type === "sweep") &&
       isSessionTranscriptIndexStatusClean(db)
@@ -97,7 +114,17 @@ export function bindSqliteWorkerBackend(_input: undefined, context: SqliteWorker
                       .where("session_id", "=", command.input.plan.sessionId),
                   )
                 : undefined;
-              return { finalized, ...(session ? { sessionKey: session.session_key } : {}) };
+              if (session) {
+                publishUnchangedSessionTranscriptAuthority(
+                  { db, path: context.databasePath },
+                  session.session_key,
+                );
+              }
+              return {
+                finalized,
+                ...(session ? { sessionKey: session.session_key } : {}),
+                transcriptPublication: readStagedSessionTranscriptAuthority({ db }),
+              };
             }
           }
           throw new Error("Unknown transcript projection publication operation");
