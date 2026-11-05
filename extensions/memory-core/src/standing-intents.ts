@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PluginServiceSchedulerV1 } from "openclaw/plugin-sdk/plugin-entry";
 import { resolveRuntimeWorkerUrl } from "openclaw/plugin-sdk/process-runtime";
+import { computeBackoff } from "openclaw/plugin-sdk/runtime-env";
 import { openOpenClawAgentSqliteWorkerStoreV2 } from "openclaw/plugin-sdk/sqlite-runtime";
 import { captureMemoryAgentDatabaseOptions } from "./memory-agent-database.js";
 import { memoryCpuProcessEntrypoints } from "./memory/manager-cpu-entrypoints.js";
@@ -19,6 +20,9 @@ import {
 
 type DatabaseOptions = ReturnType<typeof captureMemoryAgentDatabaseOptions>;
 const lifecycleListeners = new Set<(path: string, nextDueAt: number | null) => void>();
+// Matching maintains lifecycle itself, so a late sweep is housekeeping. Retrying every
+// agent on one fixed delay re-collided with a saturated store budget indefinitely.
+const MAINTENANCE_RETRY = { initialMs: 30_000, maxMs: 15 * 60_000, factor: 2, jitter: 0.2 };
 
 export {
   DEFAULT_INTENT_COOLDOWN_SECONDS,
@@ -82,6 +86,7 @@ export function startStandingIntentMaintenance(params: {
     }),
   );
   const jobs = new Map<string, ReturnType<PluginServiceSchedulerV1["schedule"]>>();
+  const failures = new Map<string, number>();
   const schedule = (path: string, nextDueAt: number | null) => {
     const target = targets.get(path);
     if (!target || scheduler.signal.aborted) {
@@ -106,21 +111,31 @@ export function startStandingIntentMaintenance(params: {
             );
           } catch (error) {
             if (!scheduler.signal.aborted) {
-              params.warn(`memory-core: standing intent maintenance failed: ${String(error)}`);
-              schedule(path, scheduler.now() + 30_000);
+              const attempt = (failures.get(path) ?? 0) + 1;
+              failures.set(path, attempt);
+              const delayMs = computeBackoff(MAINTENANCE_RETRY, attempt);
+              params.warn(
+                `memory-core: standing intent maintenance failed (attempt ${attempt}, retrying in ${Math.round(delayMs / 1000)}s): ${String(error)}`,
+              );
+              schedule(path, scheduler.now() + delayMs);
             }
           }
         },
       }),
     );
   };
-  lifecycleListeners.add(schedule);
+  // Any completed operation on the database ends its failure streak.
+  const observeLifecycle = (path: string, nextDueAt: number | null) => {
+    failures.delete(path);
+    schedule(path, nextDueAt);
+  };
+  lifecycleListeners.add(observeLifecycle);
   // Restart must process overdue expiry/cooldown before trusting a retained deadline.
   for (const path of targets.keys()) {
     schedule(path, null);
   }
   return () => {
-    lifecycleListeners.delete(schedule);
+    lifecycleListeners.delete(observeLifecycle);
     for (const job of jobs.values()) {
       job.cancel();
     }

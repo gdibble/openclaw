@@ -358,6 +358,50 @@ describe("standing-intent admitted operations", () => {
     }
   });
 
+  it("backs off maintenance while the worker store budget is exhausted", async () => {
+    const intent = await createStandingIntent({
+      agentId: "main",
+      description: "Review launch.",
+      triggerKeywords: ["launch"],
+      creatorSender: "owner",
+      nowMs: 0,
+      expiresAt: 10_000_000,
+    });
+    await closeOpenClawAgentDatabasesAsync();
+    closeOpenClawAgentDatabasesForTest();
+    const clock = createGatewaySchedulerClock(1_000);
+    const gateway = createTestGatewayScheduler(clock.clock);
+    const scheduler = createTestPluginServiceScheduler(gateway);
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+    const capacity = () =>
+      new sqliteRuntime.SqliteWorkerError("SQLite worker store capacity reached", "overloaded");
+    const open = vi
+      .spyOn(sqliteRuntime, "openOpenClawAgentSqliteWorkerStoreV2")
+      .mockRejectedValueOnce(capacity())
+      .mockRejectedValueOnce(capacity());
+    const warn = vi.fn();
+    const stop = startStandingIntentMaintenance({ agentIds: ["main"], scheduler, warn });
+    try {
+      await clock.wake();
+      expect(gateway.nextWakeAtMs).toBe(31_000);
+      await clock.advanceTo(31_000);
+      // A fixed delay would retry at 61s; the streak doubles instead.
+      expect(gateway.nextWakeAtMs).toBe(91_000);
+      await clock.advanceTo(91_000);
+      expect(gateway.nextWakeAtMs).toBe(intent.expiresAt);
+      expect(warn.mock.calls).toEqual([
+        [expect.stringContaining("(attempt 1, retrying in 30s): SqliteWorkerError")],
+        [expect.stringContaining("(attempt 2, retrying in 60s): SqliteWorkerError")],
+      ]);
+    } finally {
+      stop();
+      open.mockRestore();
+      random.mockRestore();
+      await scheduler.stop();
+      await gateway.stop();
+    }
+  });
+
   it.each(["create", "list", "cancel"] as const)(
     "rejects %s after owner revocation during writer admission without changing persisted rows",
     async (action) => {
