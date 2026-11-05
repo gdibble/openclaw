@@ -51,6 +51,7 @@ import {
   finishGatewayHttpAuthorityError,
   runGatewayHttpRequest,
 } from "./http-request-authority.js";
+import { finishGatewayHttpUnavailable } from "./http-unavailable.js";
 import {
   assertRemoteControlUiIngressCurrent,
   getRemoteControlUiIngressContext,
@@ -712,7 +713,7 @@ export function createGatewayHttpRequestHandler(
       respondNotFound(res);
       return undefined;
     } catch (err) {
-      if (finishGatewayHttpAuthorityError(res, err)) {
+      if (finishGatewayHttpAuthorityError(res, err) || finishGatewayHttpUnavailable(res, err)) {
         return undefined;
       }
       console.error("[gateway-http] unhandled error in request handler:", err);

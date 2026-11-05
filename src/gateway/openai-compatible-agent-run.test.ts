@@ -11,6 +11,7 @@ import { agentCommandFromGatewayIngress } from "../commands/agent.js";
 import { setRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createAbortError } from "../infra/abort-signal.js";
+import { SqliteWorkerError } from "../infra/sqlite-worker-contract.js";
 import * as profileReader from "../state/user-profile-list.js";
 import { setUserProfileRole } from "../state/user-profile-writes.worker.js";
 import { ensureProfileForEmail } from "../state/user-profiles.js";
@@ -445,5 +446,30 @@ describe("OpenAI-compatible agent error envelopes", () => {
       status,
       error: { message, type: "api_error" },
     });
+  });
+
+  it("reports worker store capacity as a retryable 503", () => {
+    expect(
+      resolveOpenAiCompatibleAgentError(
+        new SqliteWorkerError("SQLite worker open input capacity reached", "overloaded"),
+      ),
+    ).toEqual({
+      status: 503,
+      error: {
+        message: "SQLite worker open input capacity reached",
+        type: "service_unavailable",
+        code: "UNAVAILABLE",
+        retryable: true,
+        retryAfterMs: 1000,
+        details: { code: "sqlite-worker-overloaded" },
+      },
+    });
+  });
+
+  it("keeps a cleanup aggregate around an overload as a generic failure", () => {
+    const overloaded = new SqliteWorkerError("SQLite worker store capacity reached", "overloaded");
+    expect(
+      resolveOpenAiCompatibleAgentError(new AggregateError([overloaded], "cleanup failed")),
+    ).toEqual({ status: 500, error: { message: "internal error", type: "api_error" } });
   });
 });

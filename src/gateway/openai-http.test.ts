@@ -30,6 +30,10 @@ import {
   getActiveGatewayRootWorkCount,
   isGatewaySubordinateWorkAdmissionClosed,
 } from "../process/gateway-work-admission.js";
+import {
+  AgentDatabaseAdmissionError,
+  createAgentDatabaseInspectionRefusal,
+} from "../state/agent-database-admission.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import { acquireTestPortBlock, type TestPortClaim } from "../test-utils/port-claims.js";
 import {
@@ -1650,6 +1654,52 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
     });
     expect(body).not.toContain(privateDetail);
   });
+
+  it.each([false, true])(
+    "answers an agent storage admission refusal as retryable 503 (stream=%s)",
+    async (stream) => {
+      const privatePath = "/private/state/agents/main/agent/openclaw-agent.sqlite";
+      agentCommandMock.mockClear();
+      agentCommandMock.mockRejectedValueOnce(
+        new AgentDatabaseAdmissionError(
+          createAgentDatabaseInspectionRefusal({
+            agentId: "main",
+            paths: [privatePath],
+            pending: true,
+            reason: `Agent main has not completed startup inspection and preparation. ${privatePath}`,
+          }),
+        ),
+      );
+      const unavailable = {
+        message: "Agent main has not completed startup inspection and preparation. Retry shortly.",
+        type: "service_unavailable",
+        code: "UNAVAILABLE",
+        retryable: true,
+        retryAfterMs: 250,
+        details: { code: "agent-database-inspection-pending", agentId: "main" },
+      };
+
+      const res = await postChatCompletions(enabledPort, chatRequest({ stream }));
+      const body = await res.text();
+      expect(body).not.toContain(privatePath);
+      if (stream) {
+        // SSE headers are committed before the run; the terminal frame carries the shape.
+        expect(res.status).toBe(200);
+        const frames = parseSseDataLines(body);
+        expect(frames.at(-1)).toBe("[DONE]");
+        expect(
+          frames
+            .filter((frame) => frame !== "[DONE]")
+            .map((frame) => JSON.parse(frame) as Record<string, unknown>)
+            .filter((frame) => "error" in frame),
+        ).toEqual([{ error: unavailable }]);
+      } else {
+        expect(res.status).toBe(503);
+        expect(res.headers.get("retry-after")).toBe("1");
+        expect(JSON.parse(body)).toEqual({ error: unavailable });
+      }
+    },
+  );
 
   it.each([
     { name: "error stop", meta: { stopReason: "error" }, outcome: "failed", status: 500 },

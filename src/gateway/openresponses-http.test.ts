@@ -12,6 +12,7 @@ import { resetConfigRuntimeState, type GatewayAuthConfig } from "../config/confi
 import { upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
 import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
 import * as agentEvents from "../infra/agent-events.js";
+import { SqliteWorkerError } from "../infra/sqlite-worker-contract.js";
 import { getGatewayContextResolver } from "../plugins/runtime/gateway-request-scope.js";
 import { enqueueCommandInLane } from "../process/command-queue.js";
 import {
@@ -279,6 +280,24 @@ describe("OpenResponses HTTP API (e2e)", () => {
     firstAgentOpts,
     agentCommandMock,
     fetchWithSsrFGuardMock,
+  });
+
+  it("answers SQLite worker store capacity as a retryable 503 response", async () => {
+    agentCommandMock.mockClear();
+    agentCommandMock.mockRejectedValueOnce(
+      new SqliteWorkerError("SQLite worker store capacity reached", "overloaded"),
+    );
+
+    const res = await postResponses(enabledPort, { model: "openclaw", input: "hi" });
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).toBe("1");
+    const json = (await res.json()) as ResponseResource;
+    expect(json.status).toBe("failed");
+    expect(json.error).toEqual({
+      code: "service_unavailable",
+      message: "SQLite worker store capacity reached",
+    });
   });
 
   it("binds the Gateway lifecycle resolver to response runs", async () => {

@@ -18,6 +18,7 @@ import {
 } from "./http-common.js";
 import { handleGatewayPostJsonEndpoint } from "./http-endpoint-helpers.js";
 import type { GatewayHttpRequestAuthOptions } from "./http-request-authority.js";
+import { setGatewayHttpRetryAfter } from "./http-unavailable.js";
 import {
   authorizeOpenAiCompatibleHttpModelOverride,
   resolveOpenAiCompatibleHttpSenderIsOwner,
@@ -101,6 +102,7 @@ export async function sendOpenAiCompatibleJsonResponse(params: {
     if (!params.signal.aborted) {
       logWarn(`${params.failureLabel}: ${String(error)}`);
       const mapped = resolveOpenAiCompatibleAgentError(error);
+      setGatewayHttpRetryAfter(params.res, mapped.error.retryAfterMs);
       if (params.fail) {
         params.fail(mapped);
       } else {

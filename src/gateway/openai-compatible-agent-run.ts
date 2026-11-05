@@ -13,6 +13,7 @@ import { bindGatewayContextResolver } from "../plugins/runtime/gateway-request-s
 import { defaultRuntime } from "../runtime.js";
 import type { AuthorizedGatewayHttpRequest } from "./http-auth-utils.js";
 import type { GatewayHttpRequestAuthOptions } from "./http-request-authority.js";
+import { resolveGatewayHttpUnavailableError } from "./http-unavailable.js";
 import { resolveOpenAiCompatError, type OpenAiCompatError } from "./openai-compat-errors.js";
 import { resolveGatewayOperatorRoleActor } from "./operator-role-policy.js";
 import { captureGatewayOperatorRunAuthority } from "./operator-run-authority.js";
@@ -53,6 +54,10 @@ export function resolveOpenAiCompatibleAgentError(
   }
   if (isGatewayRunCancellation(error)) {
     return { status: 500, error: { message: "agent run was cancelled", type: "api_error" } };
+  }
+  const unavailable = resolveGatewayHttpUnavailableError(error);
+  if (unavailable) {
+    return { status: 503, error: unavailable };
   }
   return (
     resolveOpenAiCompatError(error) ?? {

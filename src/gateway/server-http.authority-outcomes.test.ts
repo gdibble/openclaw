@@ -8,9 +8,15 @@ import {
   waitForDiagnosticEventsDrained,
 } from "../infra/diagnostic-events.js";
 import * as lifecycle from "../infra/http-request-lifecycle.js";
+import { SqliteWorkerError } from "../infra/sqlite-worker-contract.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { AsyncWorkScope, getAsyncWorkSignal, trackAsyncWork } from "../shared/async-work-scope.js";
+import {
+  AgentDatabaseAdmissionError,
+  createAgentDatabaseInspectionRefusal,
+  inspectAgentDatabaseAdmission,
+} from "../state/agent-database-admission.js";
 import { reserveTestPortListener } from "../test-utils/port-claims.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
 import {
@@ -311,6 +317,79 @@ it.each([
     }
   },
 );
+
+const privateDatabasePath = "/private/state/agents/main/agent/openclaw-agent.sqlite";
+const storageRefusals = {
+  "pending inspection": () =>
+    new AgentDatabaseAdmissionError(
+      createAgentDatabaseInspectionRefusal({
+        agentId: "main",
+        paths: [privateDatabasePath],
+        pending: true,
+        reason: `Agent main has not completed startup inspection and preparation. ${privateDatabasePath}`,
+      }),
+    ),
+  "ownership mismatch": () =>
+    new AgentDatabaseAdmissionError(
+      inspectAgentDatabaseAdmission({
+        agentId: "main",
+        path: privateDatabasePath,
+        metadata: { role: "agent", agentId: "other" },
+      })!,
+    ),
+  "store capacity": () =>
+    new SqliteWorkerError("SQLite worker store capacity reached", "overloaded"),
+};
+
+it.each(
+  (["core", "plugin"] as const).flatMap((surface) =>
+    (Object.keys(storageRefusals) as Array<keyof typeof storageRefusals>).map(
+      (refusal) => [surface, refusal] as const,
+    ),
+  ),
+)("answers a %s route's %s refusal as typed 503", async (surface, refusal) => {
+  const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  const warnings = vi.spyOn(log, "warn").mockImplementation(() => {});
+  route.mockImplementation(async () => {
+    throw storageRefusals[refusal]();
+  });
+  const response = await fetch(`http://127.0.0.1:${listener.claim.port}/authority/${surface}`);
+  const body = await response.text();
+  expect(response.status).toBe(503);
+  expect(response.headers.get("content-type")).toBe("application/json; charset=utf-8");
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(response.headers.get("retry-after")).toBe(refusal === "ownership mismatch" ? null : "1");
+  expect(body).not.toContain("/private/");
+  expect(JSON.parse(body)).toEqual({
+    error: {
+      type: "service_unavailable",
+      code: "UNAVAILABLE",
+      ...(refusal === "pending inspection"
+        ? {
+            message:
+              "Agent main has not completed startup inspection and preparation. Retry shortly.",
+            retryable: true,
+            retryAfterMs: 250,
+            details: { code: "agent-database-inspection-pending", agentId: "main" },
+          }
+        : refusal === "ownership mismatch"
+          ? {
+              message:
+                'Agent main database belongs to another agent. Run "openclaw doctor" on the Gateway host for repair steps.',
+              retryable: false,
+              details: { code: "agent-database-ownership-mismatch", agentId: "main" },
+            }
+          : {
+              message: "SQLite worker store capacity reached",
+              retryable: true,
+              retryAfterMs: 1000,
+              details: { code: "sqlite-worker-overloaded" },
+            }),
+    },
+  });
+  expect(errors).not.toHaveBeenCalled();
+  expect(warnings).not.toHaveBeenCalled();
+});
 
 // Each request owner consumes both authority error types and preserves unexpected errors.
 // Shared response handling covers disconnect, staged headers, and partial streams once.

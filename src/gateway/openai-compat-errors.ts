@@ -5,6 +5,7 @@ import type { FailoverReason } from "../agents/failover/signal.js";
 import { ToolAuthorizationError } from "../agents/tool-input-error.js";
 import { SessionWorkStartError } from "../config/sessions/session-work-start.js";
 import { redactToolPayloadText } from "../logging/redact.js";
+import type { GatewayHttpUnavailableError } from "./http-unavailable.js";
 
 export type OpenAiCompatError = {
   status: number;
@@ -12,7 +13,7 @@ export type OpenAiCompatError = {
     message: string;
     type: string;
     code?: string;
-  };
+  } & Partial<Pick<GatewayHttpUnavailableError, "retryable" | "retryAfterMs" | "details">>;
 };
 
 const ERROR_TYPE_BY_REASON = {

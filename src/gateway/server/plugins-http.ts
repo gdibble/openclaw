@@ -28,6 +28,7 @@ import {
   finishGatewayHttpAuthorityError,
   GatewayHttpRequestAuthorityError,
 } from "../http-request-authority.js";
+import { finishGatewayHttpUnavailable } from "../http-unavailable.js";
 import type { AuthorizedGatewayHttpRequest } from "../http-utils.js";
 import {
   getRemoteControlUiIngressContext,
@@ -405,7 +406,10 @@ export function createGatewayPluginRequestHandler(params: {
           return true;
         }
       } catch (err) {
-        if (finishGatewayHttpAuthorityError(res, err)) {
+        if (
+          finishGatewayHttpAuthorityError(res, err) ||
+          (!legacyRequest && finishGatewayHttpUnavailable(res, err))
+        ) {
           return true;
         }
         log.warn(`plugin http route failed (${route.pluginId ?? "unknown"}): ${String(err)}`);
