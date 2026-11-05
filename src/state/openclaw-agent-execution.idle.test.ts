@@ -195,3 +195,29 @@ it("retains failed eviction custody without retaining a fifth idle executor", as
   expect(first.close).toHaveBeenCalledTimes(2);
   expect(closedAgents()).toEqual(["first", "fifth"]);
 });
+
+it("lets broker capacity reclamation retire only an executor parked idle", async () => {
+  // The owner hands each native generation its broker reclamation hook as the final argument.
+  const retireIdleFor = (agentId: string) =>
+    vi
+      .mocked(native.createAgentDatabaseNativeGeneration)
+      .mock.calls.find(([calledAgentId]) => calledAgentId === agentId)?.[11];
+  const borrowed = capture("borrowed");
+  try {
+    await borrowed.prepare(source);
+    await use("idle");
+    expect(retireIdleFor("borrowed")?.()).toBe(false);
+    expect(retireIdleFor("idle")?.()).toBe(true);
+    // The closing generation declines a second reclamation while its idle close runs.
+    expect(retireIdleFor("idle")?.()).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(closedAgents()).toEqual(["idle"]);
+    // A retired generation declines again; later use reopens through ordinary admission.
+    expect(retireIdleFor("idle")?.()).toBe(false);
+    await use("idle");
+    expect(opened.map(({ agentId }) => agentId)).toEqual(["borrowed", "idle", "idle"]);
+    expect(closedAgents()).toEqual(["idle"]);
+  } finally {
+    await borrowed.release();
+  }
+});

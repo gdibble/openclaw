@@ -74,6 +74,8 @@ export function createAgentDatabaseNativeGeneration(
   onTerminal: (reason: Error) => void,
   creatingIdentity?: DatabasePathIdentity,
   creationClaim?: AgentDatabaseFileExecutionOpen["creationClaim"],
+  /** Starts the owner's idle close when it confirms this generation is parked idle. */
+  retireIdle?: () => boolean,
 ): AgentDatabaseNativeGeneration {
   const input: AgentDatabaseFileExecutionOpen = {
     leaseId: randomUUID(),
@@ -427,6 +429,18 @@ export function createAgentDatabaseNativeGeneration(
               readOpenRefused = readRefused;
             },
             onNativeLost,
+            retireIdle: retireIdle
+              ? () => {
+                  if (!retireIdle()) {
+                    return undefined;
+                  }
+                  // Seal inside the broker's reclamation turn so host drainage cannot cycle
+                  // through this open. Admission joins only this client's native close: lease
+                  // cleanup after an unclean exit opens its own client, which would queue
+                  // behind the reclaiming open, so the generation's close settles it later.
+                  return openedStore?.close();
+                }
+              : undefined,
           },
         );
         return openedStore;

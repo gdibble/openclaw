@@ -808,14 +808,35 @@ before the Gateway starts; other values fall back to the nearest bound or the
 default with a warning. Hosts without shared SQLite workers, such as Bun without
 native close, still run at most 64 dedicated database workers.
 
-At the client limit, new opens can retire an owner-confirmed idle shared-state
-client before its normal deadline, least recently used first. Accepted scopes,
-pending commands, maintenance clients, and clients from another runtime
-generation are protected. Retirement joins native cleanup before admission
-resumes, and later use reopens the retired client transparently. The broker
-never closes a client its owner has not confirmed idle. If no client is
-eligible, the open fails as overloaded, and Gateway HTTP routes answer `503`
-with `Retry-After`. Stored data does not change.
+At the client limit, new opens can retire an owner-confirmed idle client before
+its normal deadline, least recently used first. Two owners confirm idleness: the
+shared-state owner, and the agent database executor for an agent whose last
+borrower released it (the up to four warm executors that otherwise close after
+30 idle minutes). Accepted scopes, pending commands, maintenance clients, and
+clients from another runtime generation are protected. Retirement joins the
+client's native close before admission resumes; an agent executor finishes its
+lease cleanup afterward, and its next use waits for that cleanup. Later use
+reopens the retired client transparently. The broker never closes a
+client its owner has not confirmed idle. If no client is eligible, the open
+fails as overloaded. Gateway HTTP routes answer `503` with `Retry-After`, and
+RPC answers retryable `UNAVAILABLE`. Stored data does not change.
+
+Clients that stay open while their owner holds them, and so are never
+reclaimed:
+
+- An agent database executor with any live borrower. An agent's memory index
+  manager keeps a borrower until the memory plugin reloads or closes it, so each
+  agent with memory search in use holds one client.
+- An agent database executor while a subagent's parent stream is open.
+- Plugin databases opened through the database engine runtime, such as the
+  Logbook, Workboard, and team reports stores: one client each while the plugin
+  runs.
+- A memory index rebuild's shadow database, until the rebuild finishes.
+
+Short operations (session metadata, sharing, heartbeat and outbox writes)
+borrow an executor only for that operation. When many agents keep memory search
+active at once, raise `OPENCLAW_SQLITE_WORKER_MAX_STORES` above the number of
+those agents plus the plugin stores.
 
 Observations belong to the open database handle in the Gateway process. They
 reset when that handle is replaced or the Gateway restarts. Status and Doctor

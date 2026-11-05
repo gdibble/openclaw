@@ -249,6 +249,21 @@ export function createAgentDatabaseExecution(
         reportTerminal,
         fileIdentity ? undefined : (creationIdentity ?? creatingTarget),
         creationClaim?.witness,
+        // At broker capacity, start the idle close that a parked generation's TTL would.
+        () => {
+          if (
+            generation !== created ||
+            borrowers !== 0 ||
+            nativeClosing ||
+            !executionState.idle.has(owner)
+          ) {
+            return false;
+          }
+          runInExecutionOwnerContext(() => {
+            void owner.closeIdle().catch(reportCleanupFailure);
+          });
+          return true;
+        },
       );
       generation = created;
     }

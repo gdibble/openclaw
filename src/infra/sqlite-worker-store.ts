@@ -195,6 +195,7 @@ export function openAgentDatabaseSqliteWorkerStore<Operations extends SqliteWork
     stateDatabasePath?: string;
     onNativeLost?: SqliteWorkerOpenCustody["onNativeLost"];
     onNativeStopped?: SqliteWorkerOpenCustody["onNativeStopped"];
+    retireIdle?: SqliteWorkerOpenCustody["retireIdle"];
     signal?: AbortSignal;
     assertCurrent(): void;
     createAdmission: SqliteWorkerAdmissionFactory;
@@ -216,6 +217,7 @@ export function openAgentDatabaseSqliteWorkerStore<Operations extends SqliteWork
         stateDatabasePath: custody.stateDatabasePath,
         onNativeLost: custody.onNativeLost,
         onNativeStopped: custody.onNativeStopped,
+        retireIdle: custody.retireIdle,
         signal: custody.signal,
       },
     ),
