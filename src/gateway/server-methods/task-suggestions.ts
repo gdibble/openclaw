@@ -17,6 +17,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { resolveProjectCheckout } from "../../projects/project-checkout.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { authorizeGatewaySessionCreation, hasOperatorBoundary } from "../operator-role-policy.js";
 import { buildDashboardSessionKey } from "../session-create-key.js";
 import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
@@ -123,7 +124,12 @@ async function captureSuggestedTaskResponse(
       response = args;
     });
   } catch (error) {
-    return { ok: false, error: errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)) };
+    return {
+      ok: false,
+      error: errorShapeFromError(ErrorCodes.UNAVAILABLE, error, {
+        message: formatErrorMessage(error),
+      }),
+    };
   }
   return response?.[0]
     ? { ok: true, payload: response[1] }
@@ -311,7 +317,9 @@ async function deliverSuggestedTaskToSourceSession(
       allowMissing: true,
     });
   } catch (error) {
-    return fail(errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)));
+    return fail(
+      errorShapeFromError(ErrorCodes.UNAVAILABLE, error, { message: formatErrorMessage(error) }),
+    );
   }
   try {
     const source = sourceFacts.readCurrent(params.options.context.getRuntimeConfig()).target;

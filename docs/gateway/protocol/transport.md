@@ -133,10 +133,12 @@ Worker capacity refusals that a method does not map itself return retryable
 (a worker task pool, such as session history or placement reads). Both are
 refused before the work starts, so the same request can be retried after that
 delay. A method that maps the refusal itself answers `UNAVAILABLE` with the
-same `details.code` and owns the retry hint. A failed `chat.send` or `agent` run
-records the refusal as its outcome and offers none, because a retry with the
-same idempotency key replays that outcome. Gateway HTTP routes answer the same
-refusals with `503` and `Retry-After: 1`.
+same `details.code` and owns the retry hint. Read-only methods offer it.
+Methods that change state offer none unless they already invite a retry of that
+step, because the refusal may follow work they already did. A failed
+`chat.send` or `agent` run records the refusal as its outcome and offers none,
+because a retry with the same idempotency key replays that outcome. Gateway
+HTTP routes answer the same refusals with `503` and `Retry-After: 1`.
 Authenticated operator requests share a bounded queue for starting RPC handlers.
 Ordinary requests have both aggregate and per-connection waiting limits, so
 concurrent Control UI setup can queue without giving one connection the entire

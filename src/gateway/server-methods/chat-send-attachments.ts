@@ -1,6 +1,6 @@
 import path from "node:path";
 import { performance } from "node:perf_hooks";
-import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/index.js";
+import { ErrorCodes } from "../../../packages/gateway-protocol/src/index.js";
 import { resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
 import { getAgentWorkspaceAccess } from "../../agents/workspace-access.js";
 import type { StageSandboxMediaResult } from "../../auto-reply/reply/stage-sandbox-media.js";
@@ -25,6 +25,7 @@ import {
   stripImageMediaMarkers,
   UnsupportedAttachmentError,
 } from "../chat-attachments.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { resolveOperatorSessionCreation } from "../session-creation-provenance.js";
 import { SessionMutationAuthorizationChangedError } from "../session-mutation-authorization-error.js";
 import { resolveGatewayModelSupportsImages } from "../session-utils.js";
@@ -356,9 +357,10 @@ export async function prepareChatSendAttachments(params: {
       undefined,
       err instanceof SessionMutationAuthorizationChangedError
         ? err.error
-        : errorShape(
+        : errorShapeFromError(
             err instanceof MediaOffloadError ? ErrorCodes.UNAVAILABLE : ErrorCodes.INVALID_REQUEST,
-            String(err),
+            err,
+            { message: String(err) },
           ),
     );
     return { ok: false as const };

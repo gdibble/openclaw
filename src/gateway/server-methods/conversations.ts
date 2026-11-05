@@ -17,6 +17,7 @@ import {
 import { runGatewayConversationList } from "../conversation-list.js";
 import { runGatewayConversationSend } from "../conversation-send.js";
 import { runGatewayConversationTurn } from "../conversation-turn.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { ADMIN_SCOPE } from "../operator-scopes.js";
 import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
 import { formatForLog } from "../ws-log.js";
@@ -138,9 +139,10 @@ async function handleConversationWrite(
     } catch (cause) {
       const isTerminalInputError = cause instanceof ConversationInputError;
       const isOperationConflict = cause instanceof ConversationOperationConflictError;
-      const error = errorShape(
+      const error = errorShapeFromError(
         isTerminalInputError ? ErrorCodes.INVALID_REQUEST : ErrorCodes.UNAVAILABLE,
-        cause instanceof Error ? cause.message : String(cause),
+        cause,
+        { message: cause instanceof Error ? cause.message : String(cause) },
       );
       const result: GatewayInflightResult = {
         ok: false,

@@ -35,6 +35,7 @@ import { isModelSelectionLocked } from "../../sessions/model-overrides.js";
 import { runExclusiveSessionLifecycleMutation } from "../../sessions/session-lifecycle-admission.js";
 import { handleSessionStateSessionDeleted } from "../../sessions/session-state-events.js";
 import { removeSessionWorktree } from "../../sessions/session-worktree-lifecycle.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { resolvePluginSessionOwnershipError } from "../session-plugin-ownership.js";
 import { resolveRequestedSessionAgentId as resolveRequestedGlobalAgentId } from "../session-request-agent.js";
 import { invalidSessionRequest } from "../session-request-error.js";
@@ -334,11 +335,11 @@ async function deleteGatewaySessionInScope(
             throw new SessionDeletionError(error.error);
           }
           throw new SessionDeletionError(
-            errorShape(
-              ErrorCodes.UNAVAILABLE,
-              `Session ${key} could not safely stop before deletion: ${formatErrorMessage(error)} Retry after active work or worker recovery finishes.`,
-              { retryable: true },
-            ),
+            errorShapeFromError(ErrorCodes.UNAVAILABLE, error, {
+              message: `Session ${key} could not safely stop before deletion: ${formatErrorMessage(error)} Retry after active work or worker recovery finishes.`,
+              retryable: true,
+              retryOverload: true,
+            }),
           );
         }
         // Reclaim may wait for an earlier placement operation that needs this mutex.

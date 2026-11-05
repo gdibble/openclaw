@@ -12,6 +12,7 @@ import {
   ProgressCardInputError,
 } from "../../session-cards/progress-card-input.js";
 import type { ProgressCardStore } from "../../session-cards/progress-card-store.types.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { progressCardStore } from "../progress-card-store.js";
 import { SessionMutationAuthorizationChangedError } from "../session-mutation-authorization-error.js";
 import { sessionObserverScopeKey } from "../session-observer-model.js";
@@ -105,7 +106,14 @@ export function createProgressCardHandlers(
         if (error instanceof SessionMutationAuthorizationChangedError) {
           throw error;
         }
-        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, String(error)));
+        respond(
+          false,
+          undefined,
+          errorShapeFromError(ErrorCodes.UNAVAILABLE, error, {
+            message: String(error),
+            retryOverload: true,
+          }),
+        );
       } finally {
         read?.release();
       }
@@ -172,7 +180,11 @@ export function createProgressCardHandlers(
         if (error instanceof SessionMutationAuthorizationChangedError) {
           throw error;
         }
-        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, String(error)));
+        respond(
+          false,
+          undefined,
+          errorShapeFromError(ErrorCodes.UNAVAILABLE, error, { message: String(error) }),
+        );
       }
     },
   };

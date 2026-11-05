@@ -11,6 +11,7 @@ import { assertRequiredWorkerSelection } from "../../config/required-worker-prof
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { ADMIN_SCOPE } from "../method-scopes.js";
 import {
   loadWorkerPlacementSessionRuntimeModule,
@@ -218,9 +219,10 @@ function respondWorkerDispatchError(error: unknown, respond: RespondFn): void {
   respond(
     false,
     undefined,
-    errorShape(
+    errorShapeFromError(
       isWorkerDispatchInputError(error) ? ErrorCodes.INVALID_REQUEST : ErrorCodes.UNAVAILABLE,
-      formatErrorMessage(error),
+      error,
+      { message: formatErrorMessage(error) },
     ),
   );
 }

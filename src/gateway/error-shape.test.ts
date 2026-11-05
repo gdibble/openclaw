@@ -44,6 +44,27 @@ it("classifies worker capacity refusals while leaving the retry hint to the surf
   ).toEqual({ code: ErrorCodes.UNAVAILABLE, message: expect.any(String) });
 });
 
+it("offers the overload's own retry hint only to a surface that asks and only for an overload", () => {
+  const overload = new WorkerTaskError("Placement read capacity reached", "overloaded");
+  expect(
+    errorShapeFromError(ErrorCodes.INVALID_REQUEST, overload, {
+      message: "skills.status failed",
+      retryOverload: true,
+    }),
+  ).toEqual({
+    code: ErrorCodes.UNAVAILABLE,
+    message: "skills.status failed",
+    retryable: true,
+    retryAfterMs: 1000,
+    details: { code: "worker-task-overloaded" },
+  });
+  expect(
+    errorShapeFromError(ErrorCodes.INVALID_REQUEST, new Error("bad skill filter"), {
+      retryOverload: true,
+    }),
+  ).toEqual({ code: ErrorCodes.INVALID_REQUEST, message: "bad skill filter" });
+});
+
 it.each([
   { error: new SqliteWorkerError("SQLite worker host is closing", "overloaded"), retry: true },
   {

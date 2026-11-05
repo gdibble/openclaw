@@ -6,6 +6,7 @@ import {
 } from "../../../packages/gateway-protocol/src/index.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { SessionMutationAuthorizationChangedError } from "../session-mutation-authorization-error.js";
 import { withReadySessionRows } from "../session-row-prepared-read.js";
 import type { SessionSharingTarget } from "../session-sharing-policy.js";
@@ -92,7 +93,11 @@ export async function withSessionDiscoveryAccess(
       undefined,
       error instanceof SessionMutationAuthorizationChangedError
         ? error.error
-        : errorShape(ErrorCodes.INVALID_REQUEST, formatErrorMessage(error)),
+        : // Discovery only reads, so an overload may offer its retry.
+          errorShapeFromError(ErrorCodes.INVALID_REQUEST, error, {
+            message: formatErrorMessage(error),
+            retryOverload: true,
+          }),
     );
   }
 }

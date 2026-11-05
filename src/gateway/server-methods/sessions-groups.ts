@@ -12,6 +12,7 @@ import {
   validateSessionsGroupsUpdateParams,
 } from "../../../packages/gateway-protocol/src/index.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { ADMIN_SCOPE } from "../method-scopes.js";
 import { ensureSessionGroupCatalog, readSessionGroupCatalog } from "../session-group-catalog.js";
 import { filterMutableSessionGroupRecords } from "../session-group-defaults-access.js";
@@ -41,7 +42,7 @@ function sessionGroupMutationError(
   }
   return inputError && error instanceof inputError
     ? errorShape(ErrorCodes.INVALID_REQUEST, error.message)
-    : errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error));
+    : errorShapeFromError(ErrorCodes.UNAVAILABLE, error, { message: formatErrorMessage(error) });
 }
 
 export const sessionGroupHandlers: GatewayRequestHandlers = {

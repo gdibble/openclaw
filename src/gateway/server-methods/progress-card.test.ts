@@ -5,6 +5,7 @@ import {
   type ProgressCard,
   type ProgressCardStep,
 } from "../../../packages/gateway-protocol/src/index.js";
+import { SqliteWorkerError } from "../../infra/sqlite-worker-contract.js";
 import type { ProgressCardStore } from "../../session-cards/progress-card-store.types.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { createProgressCardHandlers } from "./progress-card.js";
@@ -86,6 +87,26 @@ describe("progress card gateway methods", () => {
       expect(harness[operation]).toHaveBeenCalledOnce();
     },
   );
+
+  it.each([
+    { operation: "get", retry: { retryable: true, retryAfterMs: 1000 } },
+    // A refused put may follow an accepted write, so it never invites a retry.
+    { operation: "put", retry: {} },
+  ] as const)("answers a store overload on $operation as typed UNAVAILABLE", async (row) => {
+    const harness = createHarness();
+    const overload = new SqliteWorkerError("SQLite worker queue capacity reached", "overloaded");
+    harness.get.mockRejectedValueOnce(overload);
+    harness.put.mockRejectedValueOnce(overload);
+    const respond = await harness.invoke(`progressCard.${row.operation}`, {
+      sessionKey: "agent:main:main",
+    });
+    expect(respond).toHaveBeenCalledExactlyOnceWith(false, undefined, {
+      code: "UNAVAILABLE",
+      message: expect.stringContaining("SQLite worker queue capacity reached"),
+      ...row.retry,
+      details: { code: "sqlite-worker-overloaded" },
+    });
+  });
 
   it.each([
     { agentId: "missing", message: "Unknown agent id" },

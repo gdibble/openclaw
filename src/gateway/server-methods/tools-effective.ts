@@ -48,6 +48,7 @@ import {
   deliveryContextFromSession,
   sessionDeliveryOrigin,
 } from "../../utils/delivery-context.read.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { getConnectedNodePluginToolsVersion } from "../node-plugin-tool-snapshot.js";
 import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
 import { withGatewaySessionEntryReadOnly } from "../session-utils-read-lifetime.js";
@@ -600,7 +601,10 @@ export const toolsEffectiveHandlers: GatewayRequestHandlers = {
         respond(
           false,
           undefined,
-          errorShape(ErrorCodes.UNAVAILABLE, `tools.effective failed: ${String(err)}`),
+          errorShapeFromError(ErrorCodes.UNAVAILABLE, err, {
+            message: `tools.effective failed: ${String(err)}`,
+            retryOverload: true,
+          }),
         );
       }
     },

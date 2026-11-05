@@ -48,9 +48,13 @@ export function resolveWorkerOverload(error: unknown): WorkerOverload | undefine
 export function errorShapeFromError(
   code: Parameters<typeof errorShape>[0],
   error: unknown,
-  opts?: Parameters<typeof errorShape>[2] & { message?: string },
+  opts?: Parameters<typeof errorShape>[2] & {
+    message?: string;
+    /** Offer an overload's retry hint; only for surfaces that record no outcome to replay. */
+    retryOverload?: boolean;
+  },
 ) {
-  const { message, ...metadata } = opts ?? {};
+  const { message, retryOverload, ...metadata } = opts ?? {};
   const ended = collectNestedErrorCandidates(error).find(
     (candidate) => candidate instanceof IncognitoSessionEndedError,
   );
@@ -67,6 +71,7 @@ export function errorShapeFromError(
         : overload
           ? errorShape(ErrorCodes.UNAVAILABLE, message ?? formatErrorMessageWithCode(error), {
               ...metadata,
+              ...(retryOverload ? { retryable: true, retryAfterMs: overload.retryAfterMs } : {}),
               details: { code: overload.code },
             })
           : errorShape(code, message ?? formatErrorMessageWithCode(error), metadata);

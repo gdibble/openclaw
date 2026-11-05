@@ -1,5 +1,6 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SqliteWorkerError } from "../../infra/sqlite-worker-contract.js";
 import { sessionChanges } from "../../sessions/session-row-changes.js";
 import { readGatewayAccessRevision } from "../gateway-access-revision.js";
 import { SessionMutationAuthorizationChangedError } from "../session-mutation-authorization-error.js";
@@ -127,6 +128,23 @@ describe("sessions.groups.put", () => {
     expect(respond).toHaveBeenCalledWith(true, { ok: true, groups, sectionOrder: [] }, undefined);
     expect(changes).not.toHaveBeenCalled();
     expect(readGatewayAccessRevision()).toBe(accessRevision);
+  });
+
+  it("answers a worker overload as typed UNAVAILABLE without inviting a retry", async () => {
+    groupMocks.put.mockImplementation(() => {
+      throw new SqliteWorkerError("SQLite worker store capacity reached", "overloaded");
+    });
+    const respond = vi.fn();
+    await expectDefined(
+      sessionGroupHandlers["sessions.groups.put"],
+      'sessionGroupHandlers["sessions.groups.put"] test invariant',
+    )(updateOptions({ names: ["Keep"] }, respond));
+
+    expect(respond).toHaveBeenCalledExactlyOnceWith(false, undefined, {
+      code: "UNAVAILABLE",
+      message: "SQLite worker store capacity reached",
+      details: { code: "sqlite-worker-overloaded" },
+    });
   });
 
   it("rethrows changed authorization instead of mapping it to an unavailable response", async () => {

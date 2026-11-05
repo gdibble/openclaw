@@ -541,17 +541,12 @@ export async function handleGatewayRequest(
         reject: (error) => respond(false, undefined, error),
       });
     } catch (error) {
-      const overload = resolveWorkerOverload(error);
-      if (error instanceof AgentDatabaseAdmissionError || overload) {
+      if (error instanceof AgentDatabaseAdmissionError || resolveWorkerOverload(error)) {
         respond(
           false,
           undefined,
-          errorShapeFromError(
-            ErrorCodes.UNAVAILABLE,
-            error,
-            // A thrown overload reached no outcome owner, so the same request may retry.
-            overload ? { retryable: true, retryAfterMs: overload.retryAfterMs } : undefined,
-          ),
+          // A thrown overload reached no outcome owner, so the same request may retry.
+          errorShapeFromError(ErrorCodes.UNAVAILABLE, error, { retryOverload: true }),
         );
         return;
       }

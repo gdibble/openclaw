@@ -4,6 +4,7 @@ import {
   type ErrorShape,
 } from "../../../packages/gateway-protocol/src/index.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { hasOperatorBoundary } from "../operator-role-policy.js";
 import { SessionMutationAuthorizationChangedError } from "../session-mutation-authorization-error.js";
 import { resolveSessionVisibility, type SessionSharingTarget } from "../session-sharing-policy.js";
@@ -97,7 +98,10 @@ export async function withSessionReactionAccess(
       undefined,
       error instanceof SessionMutationAuthorizationChangedError
         ? error.error
-        : errorShape(ErrorCodes.INVALID_REQUEST, formatErrorMessage(error)),
+        : errorShapeFromError(ErrorCodes.INVALID_REQUEST, error, {
+            message: formatErrorMessage(error),
+            retryOverload: !params.write,
+          }),
     );
   }
 }

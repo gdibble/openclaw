@@ -7,6 +7,7 @@ import {
 import { runSessionsCleanup, serializeSessionCleanupResult } from "../../config/sessions.js";
 import { getSessionColdStorageStatus } from "../../config/sessions/session-cold-storage-status.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { errorShapeFromError } from "../error-shape.js";
 import {
   getSessionColdStorageMaintenanceStatus,
   requestGatewaySessionColdStorageMaintenance,
@@ -15,8 +16,12 @@ import { emitSessionsChanged } from "./session-change-event.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import { defineValidatedGatewayHandler } from "./validation.js";
 
-const maintenanceError = (error: unknown) =>
-  errorShape(ErrorCodes.INVALID_REQUEST, formatErrorMessage(error));
+// Only the status read may offer an overload's retry; run and cleanup act on state.
+const maintenanceError = (retryOverload: boolean) => (error: unknown) =>
+  errorShapeFromError(ErrorCodes.INVALID_REQUEST, error, {
+    message: formatErrorMessage(error),
+    retryOverload,
+  });
 
 function createSessionStorageHandler(
   method: "sessions.storage.status" | "sessions.storage.run",
@@ -51,7 +56,7 @@ function createSessionStorageHandler(
         undefined,
       );
     },
-    maintenanceError,
+    maintenanceError(method === "sessions.storage.status"),
   );
 }
 
@@ -111,6 +116,6 @@ export const sessionMaintenanceHandlers: GatewayRequestHandlers = {
         emitSessionsChanged(context, { reason: "cleanup", sessionKey: undefined });
       }
     },
-    maintenanceError,
+    maintenanceError(false),
   ),
 };
