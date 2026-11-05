@@ -34,6 +34,7 @@ import {
 } from "../../state/user-profile-writes.js";
 import { UserProfileMergeError, UserProfileOwnerError } from "../../state/user-profiles-schema.js";
 import { listProfiles, UserProfileNotFoundError } from "../../state/user-profiles.js";
+import { errorShapeFromError } from "../error-shape.js";
 import {
   invalidateOperatorRolePolicy,
   resolveOperatorRoleSelection,
@@ -72,7 +73,8 @@ function refreshConnectedProfile(
   }
 }
 
-function profileError(error: unknown) {
+/** Only pure reads may offer an overload's retry; writes and identity sync may have acted. */
+function profileError(error: unknown, retryOverload = false) {
   if (
     error instanceof UserProfileNotFoundError ||
     error instanceof UserProfileOwnerError ||
@@ -80,7 +82,10 @@ function profileError(error: unknown) {
   ) {
     return errorShape(ErrorCodes.INVALID_REQUEST, error.message);
   }
-  return errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error));
+  return errorShapeFromError(ErrorCodes.UNAVAILABLE, error, {
+    message: formatErrorMessage(error),
+    retryOverload,
+  });
 }
 
 function preparePersonalPreferences(client: GatewayRequestHandlerOptions["client"]) {
@@ -198,7 +203,7 @@ export const usersHandlers: GatewayRequestHandlers = {
       if (error instanceof SessionMutationAuthorizationChangedError) {
         throw error;
       }
-      respond(false, undefined, profileError(error));
+      respond(false, undefined, profileError(error, true));
     }
   },
   "users.prefs.set": async (options) => {

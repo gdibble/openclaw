@@ -1,6 +1,5 @@
 import {
   ErrorCodes,
-  errorShape,
   validateThemesListParams,
   validateThemesGetParams,
   validateThemesSetParams,
@@ -36,6 +35,7 @@ import {
   setCanonicalUserPreferences,
 } from "../../state/user-preferences.js";
 import { readResidentUserProfileId } from "../../state/user-profile-list.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { assertActiveAgentRuntimeAuthority } from "./agent-runtime-authority.js";
 import type { GatewayRequestHandlerOptions, GatewayRequestHandlers } from "./types.js";
 import { publishUserPreferencesChanged } from "./user-preference-events.js";
@@ -215,12 +215,15 @@ async function writeThemes(
   publishUserPreferencesChanged(options.context, written.value.profileId, Object.keys(entries));
 }
 
-function themeError(error: unknown) {
-  return errorShape(
-    ErrorCodes.INVALID_REQUEST,
-    error instanceof Error ? error.message : String(error),
-  );
+function themeError(error: unknown, retryOverload = false) {
+  return errorShapeFromError(ErrorCodes.INVALID_REQUEST, error, {
+    message: error instanceof Error ? error.message : String(error),
+    retryOverload,
+  });
 }
+
+/** Listing and reading themes change nothing, so an overload may offer its retry. */
+const themeReadError = (error: unknown) => themeError(error, true);
 
 export const themeHandlers: GatewayRequestHandlers = {
   "themes.list": defineValidatedGatewayMethod(
@@ -230,7 +233,7 @@ export const themeHandlers: GatewayRequestHandlers = {
       const { catalog, result } = await readThemes(options, requestOwner(options));
       options.respond(true, { ...result, themes: catalog.map(descriptor) });
     },
-    themeError,
+    themeReadError,
   ),
   "themes.get": defineValidatedGatewayMethod(
     "themes.get",
@@ -241,7 +244,7 @@ export const themeHandlers: GatewayRequestHandlers = {
         (await readThemes(options, requestOwner(options), options.params.id)).result,
       );
     },
-    themeError,
+    themeReadError,
   ),
   "themes.set": defineValidatedGatewayMethod(
     "themes.set",

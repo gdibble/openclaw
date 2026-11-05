@@ -9,6 +9,7 @@ import { withGatewayPersonalToolUser } from "../../agents/tools/gateway-caller-c
 import { withPersonalToolTurn } from "../../auto-reply/reply/personal-tool-turn.test-support.js";
 import { setRuntimeConfigSnapshot } from "../../config/runtime-snapshot.js";
 import { requireNodeSqlite } from "../../infra/node-sqlite.js";
+import { SqliteWorkerError } from "../../infra/sqlite-worker-contract.js";
 import type { SqliteWorkerReply, SqliteWorkerRequest } from "../../infra/sqlite-worker-contract.js";
 import * as workerAdmission from "../../infra/sqlite-worker-operation-admission.js";
 import { createDeferredCore } from "../../shared/deferred.js";
@@ -72,6 +73,38 @@ async function invokePreferenceMethod(
 
 afterEach(() => {
   closeOpenClawStateDatabaseForTest();
+});
+
+test.each([
+  {
+    method: "users.prefs.get",
+    params: { keys: ["ui.accent"] },
+    store: "getCanonicalUserPreferences",
+    retry: { retryable: true, retryAfterMs: 1000 },
+  },
+  // A refused write may follow an accepted one, so it never invites a retry.
+  {
+    method: "users.prefs.set",
+    params: { entries: { "ui.accent": "#112233" } },
+    store: "setCanonicalUserPreferences",
+    retry: {},
+  },
+] as const)("$method answers a preference store overload as typed UNAVAILABLE", async (row) => {
+  using store = vi.spyOn(preferences, row.store);
+  store.mockRejectedValueOnce(
+    new SqliteWorkerError("SQLite worker store capacity reached", "overloaded"),
+  );
+  expect(await invokePreferenceMethod(row.method, row.params, "profile-overloaded")).toEqual({
+    ok: false,
+    payload: undefined,
+    error: {
+      code: "UNAVAILABLE",
+      message: "SQLite worker store capacity reached",
+      ...row.retry,
+      details: { code: "sqlite-worker-overloaded" },
+    },
+  });
+  expect(store).toHaveBeenCalledOnce();
 });
 
 test("users.prefs returns updated preferences when a write commits before read delivery", async () => {

@@ -16,6 +16,7 @@ import {
   createPersonalThemeToolCaller,
   withPersonalToolTurn,
 } from "../../auto-reply/reply/personal-tool-turn.test-support.js";
+import { SqliteWorkerError } from "../../infra/sqlite-worker-contract.js";
 import * as workerAdmission from "../../infra/sqlite-worker-operation-admission.js";
 import { sqliteWorkerOwnerProbe as probe } from "../../infra/sqlite-worker-owner-probe.test-support.js";
 import { closeOpenClawStateDatabaseAsync } from "../../state/openclaw-state-db-cache.js";
@@ -910,5 +911,26 @@ describe("theme RPC", () => {
     ).toMatchObject({ ok: false, error: { message: expect.stringContaining("no longer active") } });
     expect(reachedCommit).toBe(true);
     expect(getUserPreferences(requesterProfileId)).toEqual({});
+  });
+
+  it.each([
+    { method: "themes.get", params: {}, retry: { retryable: true, retryAfterMs: 1000 } },
+    // A refused selection may follow an accepted write, so it never invites a retry.
+    { method: "themes.set", params: { id: null, mode: "light" }, retry: {} },
+  ])("answers a preference store overload on $method as typed UNAVAILABLE", async (row) => {
+    vi.spyOn(userPreferences, "getCanonicalUserPreferences").mockRejectedValueOnce(
+      new SqliteWorkerError("SQLite worker store capacity reached", "overloaded"),
+    );
+    // The theme surface answered every failure as INVALID_REQUEST.
+    expect(await invoke(row.method, row.params)).toEqual({
+      ok: false,
+      payload: undefined,
+      error: {
+        code: "UNAVAILABLE",
+        message: "SQLite worker store capacity reached",
+        ...row.retry,
+        details: { code: "sqlite-worker-overloaded" },
+      },
+    });
   });
 });
