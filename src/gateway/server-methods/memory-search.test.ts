@@ -15,6 +15,7 @@ import {
   readLockPayloadSync,
   resolveGatewayLockPaths,
 } from "../../infra/gateway-lock.js";
+import { SqliteWorkerError } from "../../infra/sqlite-worker-contract.js";
 import type { MemoryProviderStatus, MemorySearchResult } from "../../memory-host-sdk/host/types.js";
 import {
   createPluginStateKeyedStore,
@@ -415,6 +416,37 @@ describe("memory.search gateway method", () => {
       expect.objectContaining({ message: expect.stringContaining(notice.warning) }),
     );
     expect(manager.close).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    {
+      stage: "index open",
+      message: "memory search unavailable: SQLite worker store capacity reached",
+      arrange: (overload: Error) => getActiveMemorySearchManagerCore.mockRejectedValue(overload),
+    },
+    {
+      stage: "search",
+      message: "memory search failed: SQLite worker store capacity reached",
+      arrange: (overload: Error) => {
+        const manager = createStubManager();
+        manager.search.mockRejectedValue(overload);
+        getActiveMemorySearchManagerCore.mockResolvedValue({ manager });
+      },
+    },
+  ])("answers a worker overload at $stage as a retryable typed refusal", async (row) => {
+    row.arrange(new SqliteWorkerError("SQLite worker store capacity reached", "overloaded"));
+    const respond = await invokeMemorySearch(
+      { query: "alpha" },
+      createConfig(testState.workspaceDir),
+    );
+    // A search reads only, so the refusal invites the same request again.
+    expect(respond).toHaveBeenCalledExactlyOnceWith(false, undefined, {
+      code: "UNAVAILABLE",
+      message: row.message,
+      retryable: true,
+      retryAfterMs: 1000,
+      details: { code: "sqlite-worker-overloaded" },
+    });
   });
 
   it.each([

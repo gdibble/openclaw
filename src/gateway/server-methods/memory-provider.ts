@@ -6,6 +6,7 @@ import { formatErrorMessage } from "../../infra/errors.js";
 import type { MemorySearchRequest } from "../../plugins/memory-provider-types.js";
 import { getActiveMemoryProviderCore } from "../../plugins/memory-runtime.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { captureGatewayOperatorRunAuthority } from "../operator-run-authority.js";
 import { isSyntheticGatewayCaller } from "./gateway-personal-caller.js";
 import type { GatewayRequestHandlerOptions, GatewayRequestHandlers } from "./types.js";
@@ -203,7 +204,15 @@ async function handleMemoryProviderRequest(options: GatewayRequestHandlerOptions
     assertCurrent();
     respond(true, { version: 2, agentId, providerId: acquired.providerId, ...result }, undefined);
   } catch (error) {
-    respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)));
+    // search, get, and health only read, so an overload may offer its retry.
+    respond(
+      false,
+      undefined,
+      errorShapeFromError(ErrorCodes.UNAVAILABLE, error, {
+        message: formatErrorMessage(error),
+        retryOverload: true,
+      }),
+    );
   } finally {
     open = false;
     try {

@@ -20,6 +20,7 @@ import {
 } from "../../plugins/memory-runtime.js";
 import { loadBundledPluginPublicArtifactModuleSync } from "../../plugins/public-surface-loader.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
+import { errorShapeFromError } from "../error-shape.js";
 import {
   localStateOwnerChangedError,
   runWithLocalStateMutationOwner,
@@ -199,7 +200,11 @@ async function searchMemory(options: GatewayRequestHandlerOptions, assertCurrent
     respond(
       false,
       undefined,
-      errorShape(ErrorCodes.UNAVAILABLE, `memory search unavailable: ${formatErrorMessage(error)}`),
+      // Opening the index can meet broker capacity; search only reads, so it may retry.
+      errorShapeFromError(ErrorCodes.UNAVAILABLE, error, {
+        message: `memory search unavailable: ${formatErrorMessage(error)}`,
+        retryOverload: true,
+      }),
     );
     return;
   }
@@ -263,12 +268,12 @@ async function searchMemory(options: GatewayRequestHandlerOptions, assertCurrent
     respond(
       false,
       undefined,
-      errorShape(
-        ErrorCodes.UNAVAILABLE,
-        [`memory search failed: ${formatErrorMessage(error)}`, readRebuildWarning()]
+      errorShapeFromError(ErrorCodes.UNAVAILABLE, error, {
+        message: [`memory search failed: ${formatErrorMessage(error)}`, readRebuildWarning()]
           .filter(Boolean)
           .join(" "),
-      ),
+        retryOverload: true,
+      }),
     );
   } finally {
     if (assertCurrent) {
@@ -329,7 +334,10 @@ export const memorySearchHandlers: GatewayRequestHandlers = {
         false,
         undefined,
         domainEntered
-          ? errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error))
+          ? errorShapeFromError(ErrorCodes.UNAVAILABLE, error, {
+              message: formatErrorMessage(error),
+              retryOverload: true,
+            })
           : localStateOwnerChangedError(error),
       );
     }

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { WorkerTaskError } from "../../infra/worker-task-pool.js";
 import type { MemoryProviderHandle } from "../../plugins/memory-provider-types.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { createRemoteControlUiIngressTestContext } from "../remote-control-ui.test-support.js";
@@ -245,5 +246,21 @@ describe("provider-neutral memory RPC", () => {
       expect.objectContaining({ message: "provider denied" }),
     );
     expect(mocks.legacy).not.toHaveBeenCalled();
+  });
+
+  it("answers a provider store overload as a retryable typed refusal", async () => {
+    provider.get.mockRejectedValueOnce(
+      new WorkerTaskError("worker task capacity reached", "overloaded"),
+    );
+    const read = request("memory.get", { reference });
+    await invoke("memory.get", read);
+    // A record read changes nothing, so the refusal invites the same request again.
+    expect(read.respond).toHaveBeenCalledExactlyOnceWith(false, undefined, {
+      code: "UNAVAILABLE",
+      message: "worker task capacity reached",
+      retryable: true,
+      retryAfterMs: 1000,
+      details: { code: "worker-task-overloaded" },
+    });
   });
 });
