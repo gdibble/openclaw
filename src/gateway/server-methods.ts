@@ -541,8 +541,18 @@ export async function handleGatewayRequest(
         reject: (error) => respond(false, undefined, error),
       });
     } catch (error) {
-      if (error instanceof AgentDatabaseAdmissionError || resolveWorkerOverload(error)) {
-        respond(false, undefined, errorShapeFromError(ErrorCodes.UNAVAILABLE, error));
+      const overload = resolveWorkerOverload(error);
+      if (error instanceof AgentDatabaseAdmissionError || overload) {
+        respond(
+          false,
+          undefined,
+          errorShapeFromError(
+            ErrorCodes.UNAVAILABLE,
+            error,
+            // A thrown overload reached no outcome owner, so the same request may retry.
+            overload ? { retryable: true, retryAfterMs: overload.retryAfterMs } : undefined,
+          ),
+        );
         return;
       }
       if (!(error instanceof SessionMutationAuthorizationChangedError)) {

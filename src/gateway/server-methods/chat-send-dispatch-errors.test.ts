@@ -18,6 +18,8 @@ import {
 import { withSessionEntriesFromStoresInWorker } from "../../config/sessions/session-entry-read-runtime.js";
 import { SessionTranscriptProjectionUnavailableError } from "../../config/sessions/session-transcript-projection-error.js";
 import { getAgentEventLifecycleGeneration, onAgentRuntimeEvent } from "../../infra/agent-events.js";
+import { SqliteWorkerError } from "../../infra/sqlite-worker-contract.js";
+import { WorkerTaskError } from "../../infra/worker-task-pool.js";
 import {
   GatewayDrainingError,
   markGatewayRestartDraining,
@@ -157,6 +159,57 @@ describe("handleChatSendSetupError", () => {
       }
     },
   );
+
+  it.each([
+    new SqliteWorkerError("SQLite worker store capacity reached", "overloaded"),
+    new WorkerTaskError("worker task capacity reached", "overloaded"),
+  ])("never offers a retry for a %s setup failure it caches as terminal", async (error) => {
+    const respond = vi.fn();
+    const dedupe = new Map();
+
+    await handleChatSendSetupError({
+      admission: {
+        sessionBinding: {
+          sessionId: "sess-main",
+          sessionKey: "agent:main:main",
+          agentId: "main",
+          lifecycleGeneration: "test-generation",
+        },
+        cleanupAdmittedRun: vi.fn(),
+        lifecycleGeneration: "test-generation",
+        restartSafeAdmission: undefined,
+      },
+      context: {
+        agentRunSeq: new Map(),
+        broadcast: vi.fn(),
+        chatRunState: createChatRunState(),
+        dedupe,
+        logGateway: { warn: vi.fn() },
+        nodeSendToSession: vi.fn(),
+        removeChatRun: vi.fn(),
+      } as never,
+      error,
+      respond,
+      session: {
+        agentId: "main",
+        clientRunId: "setup-overload",
+        sessionKey: "agent:main:main",
+      },
+      terminalizeRestartSafeAdmission: vi.fn(),
+    });
+
+    // A same-ID retry replays this cached failure, so a retry hint would only loop the client.
+    const cached = dedupe.get("chat:setup-overload");
+    expect(cached).toMatchObject({ ok: false, error: { code: "UNAVAILABLE" } });
+    const responded = respond.mock.calls[0]?.[2];
+    expect(responded).toBe(cached.error);
+    expect(responded).not.toHaveProperty("retryable");
+    expect(responded).not.toHaveProperty("retryAfterMs");
+    expect(responded.details).toEqual({
+      code:
+        error instanceof SqliteWorkerError ? "sqlite-worker-overloaded" : "worker-task-overloaded",
+    });
+  });
 });
 
 describe("createChatSendDispatchErrorLifecycle", () => {

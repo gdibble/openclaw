@@ -819,7 +819,8 @@ lease cleanup afterward, and its next use waits for that cleanup. Later use
 reopens the retired client transparently. The broker never closes a
 client its owner has not confirmed idle. If no client is eligible, the open
 fails as overloaded. Gateway HTTP routes answer `503` with `Retry-After`, and
-RPC answers retryable `UNAVAILABLE`. Stored data does not change.
+RPC answers `UNAVAILABLE` with `details.code: "sqlite-worker-overloaded"`
+([when it is retryable](/gateway/protocol/transport)). Stored data does not change.
 
 Clients that stay open while their owner holds them, and so are never
 reclaimed:

@@ -20,7 +20,7 @@ export type WorkerOverload = {
   retryAfterMs: number;
 };
 
-/** Both owners refuse before the work starts, so every transport may offer a retry. */
+/** Both owners refuse before their own work starts; a surface that recorded no outcome may retry. */
 export function resolveWorkerOverload(error: unknown): WorkerOverload | undefined {
   // Cleanup aggregates do not certify non-execution, so they keep the generic failure.
   if (isSqliteWorkerError(error, "overloaded")) {
@@ -40,7 +40,11 @@ export function resolveWorkerOverload(error: unknown): WorkerOverload | undefine
   return undefined;
 }
 
-/** Preserve typed refusals while allowing each surface's existing error message. */
+/**
+ * Preserve typed refusals while allowing each surface's existing error message.
+ * A worker overload keeps its class, but its retry hint stays with the caller: a surface
+ * that records the failure as the request's outcome replays it to a same-ID retry.
+ */
 export function errorShapeFromError(
   code: Parameters<typeof errorShape>[0],
   error: unknown,
@@ -63,8 +67,6 @@ export function errorShapeFromError(
         : overload
           ? errorShape(ErrorCodes.UNAVAILABLE, message ?? formatErrorMessageWithCode(error), {
               ...metadata,
-              retryable: true,
-              retryAfterMs: overload.retryAfterMs,
               details: { code: overload.code },
             })
           : errorShape(code, message ?? formatErrorMessageWithCode(error), metadata);
