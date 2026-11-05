@@ -4,6 +4,7 @@ import type {
   PortalOpenResult,
   PortalSummary,
 } from "../../../packages/gateway-protocol/src/index.js";
+import { SqliteWorkerError } from "../../infra/sqlite-worker-contract.js";
 import { WorkerTaskError } from "../../infra/worker-task-pool.js";
 import { resolveCoreOperatorGatewayMethodScope } from "../methods/core-method-policy.js";
 import type { GatewayPortalService } from "../portals/portal-service.js";
@@ -175,6 +176,26 @@ describe("portal gateway methods", () => {
       details: { code: "worker-task-overloaded" },
     });
   });
+
+  it.each(["portal.open", "portal.close"] as const)(
+    "answers a worker overload in %s as typed UNAVAILABLE without inviting a retry",
+    async (method) => {
+      const overload = async () => {
+        throw new SqliteWorkerError("SQLite worker store capacity reached", "overloaded");
+      };
+      const service = createService({ open: vi.fn(overload), close: vi.fn(overload) });
+      // A refused open or close may follow work it already did, so it offers no retry.
+      const response = await harness(service).invoke(
+        method,
+        method === "portal.open" ? { port: 3000 } : { id: portal.id },
+      );
+      expect(response).toHaveBeenCalledExactlyOnceWith(false, undefined, {
+        code: "UNAVAILABLE",
+        message: "SQLite worker store capacity reached",
+        details: { code: "sqlite-worker-overloaded" },
+      });
+    },
+  );
 
   it("delivers portal changes only to read-capable operators", () => {
     const events = new Map<string, string[]>();

@@ -100,10 +100,13 @@ async function mutatePortal(
     broadcastPortalChange(options.context, service);
     options.respond(true, result, undefined);
   } catch (error) {
+    // Opening or closing changes state, so an overload keeps its class but offers no retry.
     options.respond(
       false,
       undefined,
-      errorShape(ErrorCodes.UNAVAILABLE, error instanceof Error ? error.message : String(error)),
+      errorShapeFromError(ErrorCodes.UNAVAILABLE, error, {
+        message: error instanceof Error ? error.message : String(error),
+      }),
     );
   } finally {
     scope?.release();
