@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { withinTest } from "../../test/helpers/promise.js";
 import { createDeferredCore } from "../shared/deferred.js";
+import { isTransientRestartRecoveryError } from "./restart-recovery-errors.js";
 import { captureSqliteWorkerOpen } from "./sqlite-worker-broker-admission.js";
 import { createSqliteWorkerLifecycle } from "./sqlite-worker-broker-lifecycle.js";
 import type { Actor, Slot } from "./sqlite-worker-broker.types.js";
@@ -62,6 +63,20 @@ describe("SQLite worker slots", () => {
     const replyOwner = () => ({ fail: vi.fn(), finish: vi.fn(), dispatch: vi.fn() });
     return { lifecycle, slots, workers, options, replyOwner };
   }
+
+  it("refuses capacity waiters at host close as retryable on the next host", async () => {
+    const { lifecycle } = runtimeFixture();
+    const resume = vi.fn();
+    await lifecycle.closeHost({
+      inputAdmission: { joinOpens: async () => {}, joinPreparations: async () => {} },
+      operations: [],
+      waiters: [[resume]],
+    });
+    expect(resume).toHaveBeenCalledOnce();
+    const [refusal] = resume.mock.calls[0] ?? [];
+    expect(refusal).toMatchObject({ message: "SQLite worker host is closing", code: "overloaded" });
+    expect(isTransientRestartRecoveryError(refusal)).toBe(true);
+  });
 
   it("cancels a slot waiter while the retiring worker keeps ownership until exit", async ({
     signal,

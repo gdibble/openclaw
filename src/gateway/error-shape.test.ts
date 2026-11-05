@@ -1,8 +1,11 @@
 import { expect, it } from "vitest";
 import { ErrorCodes } from "../../packages/gateway-protocol/src/index.js";
+import { isTransientRestartRecoveryError } from "../infra/restart-recovery-errors.js";
+import { SqliteWorkerError } from "../infra/sqlite-worker-contract.js";
 import { WorkerTaskError } from "../infra/worker-task-pool.js";
 import { IncognitoSessionEndedError } from "../state/incognito-session-error.js";
 import { errorShapeFromError } from "./error-shape.js";
+import { resolveGatewayHttpUnavailableError } from "./http-unavailable.js";
 
 it("reports ended incognito sessions as typed nonretryable client failures through cleanup wrappers", () => {
   const ended = new IncognitoSessionEndedError();
@@ -40,3 +43,25 @@ it("classifies worker capacity refusals while leaving the retry hint to the surf
     errorShapeFromError(ErrorCodes.UNAVAILABLE, new WorkerTaskError("timed out", "timeout")),
   ).toEqual({ code: ErrorCodes.UNAVAILABLE, message: expect.any(String) });
 });
+
+it.each([
+  { error: new SqliteWorkerError("SQLite worker host is closing", "overloaded"), retry: true },
+  {
+    error: new SqliteWorkerError(
+      "SQLite worker commit receipt exceeds the transport limit",
+      "too-large",
+    ),
+    retry: false,
+  },
+])(
+  "answers '$error.message' with the retry class restart recovery gives it",
+  ({ error, retry }) => {
+    expect(isTransientRestartRecoveryError(error)).toBe(retry);
+    expect(resolveGatewayHttpUnavailableError(error)).toEqual(
+      retry ? expect.objectContaining({ retryable: true, retryAfterMs: 1000 }) : undefined,
+    );
+    expect(errorShapeFromError(ErrorCodes.INVALID_REQUEST, error).code).toBe(
+      retry ? ErrorCodes.UNAVAILABLE : ErrorCodes.INVALID_REQUEST,
+    );
+  },
+);

@@ -11,6 +11,7 @@ import {
   acquireGatewayStateOwner,
   assertStateDatabaseAccessAllowed,
 } from "./gateway-state-owner.js";
+import { isTransientRestartRecoveryError } from "./restart-recovery-errors.js";
 import {
   deferSqlitePostCommitPublication,
   withSqlitePostCommitPublications,
@@ -18,6 +19,7 @@ import {
 import { runSqliteImmediateTransactionSync } from "./sqlite-transaction.js";
 import { settleSqliteWorkerJob } from "./sqlite-worker-broker-reply.js";
 import type { Job } from "./sqlite-worker-broker.types.js";
+import { isSqliteWorkerError, SQLITE_WORKER_MAX_MESSAGE_BYTES } from "./sqlite-worker-contract.js";
 import { exchangeSqliteDatabaseAdmissions } from "./sqlite-worker-database-admission-relay.js";
 import {
   createSqliteDatabaseAdmissionRelay,
@@ -658,6 +660,39 @@ it("retains native COMMIT evidence when an earlier notification fails", () => {
       committed: { facts: { value: 1 } },
     });
     expect(db.prepare("SELECT value FROM proof").all()).toEqual([{ value: 1 }]);
+  } finally {
+    admission.finish();
+    db.close();
+  }
+});
+
+it("refuses a commit receipt over the transport limit as too large, not as capacity", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE proof (value INTEGER)");
+  const admission = createSqliteWorkerOperationAdmission((_request, grant) => grant());
+  const owner = { port: admission.port };
+  let failure: unknown;
+  try {
+    try {
+      withSqliteWorkerOperationAdmission(owner, () =>
+        withSqlitePostCommitPublications(db, () =>
+          runSqliteImmediateTransactionSync(db, () => {
+            db.prepare("INSERT INTO proof VALUES (1)").run();
+            deferSqliteWorkerCommitReceipt(db, {
+              value: "x".repeat(SQLITE_WORKER_MAX_MESSAGE_BYTES),
+            });
+          }),
+        ),
+      );
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({ name: "SqliteWorkerError", code: "too-large" });
+    // The same receipt cannot fit on a retry, so no retry classifier may admit it.
+    expect(isSqliteWorkerError(failure, "overloaded")).toBe(false);
+    expect(isTransientRestartRecoveryError(failure)).toBe(false);
+    expect(db.prepare("SELECT value FROM proof").all()).toEqual([]);
+    expect(admission.committed).toBeUndefined();
   } finally {
     admission.finish();
     db.close();

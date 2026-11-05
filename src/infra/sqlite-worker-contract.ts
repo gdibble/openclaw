@@ -190,7 +190,9 @@ export const SqliteWorkerAdmissionTimeoutError = resolveGlobalSingleton(
 export class SqliteWorkerError extends Error {
   constructor(
     message: string,
-    readonly code: "closed" | "overloaded" | "unavailable" | "outcome-unknown",
+    // "overloaded" refuses for capacity that frees up; "too-large" refuses a payload that no
+    // retry can fit, so retry classifiers must never treat it as overloaded.
+    readonly code: "closed" | "overloaded" | "too-large" | "unavailable" | "outcome-unknown",
   ) {
     super(message);
     this.name = "SqliteWorkerError";
@@ -210,6 +212,7 @@ export function retainSqliteWorkerErrorCode(error: Error, source: unknown): Erro
   if (
     code === "closed" ||
     code === "overloaded" ||
+    code === "too-large" ||
     code === "unavailable" ||
     code === "outcome-unknown"
   ) {

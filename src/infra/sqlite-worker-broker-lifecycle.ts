@@ -65,6 +65,7 @@ export function createSqliteWorkerLifecycle({
     // Seal clients and pending dispatch before the first await; accepted scopes still settle.
     for (const waiting of waiters) {
       for (const resume of waiting) {
+        // Capacity waiters were never dispatched, so their callers may retry on the next host.
         resume(new SqliteWorkerError("SQLite worker host is closing", "overloaded"));
       }
     }

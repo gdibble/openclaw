@@ -95,7 +95,7 @@ export function deferSqliteWorkerNativeCommitReceipt(
   if (payloadBytes > SQLITE_WORKER_MAX_MESSAGE_BYTES) {
     throw new SqliteWorkerError(
       "SQLite worker commit receipt exceeds the transport limit",
-      "overloaded",
+      "too-large",
     );
   }
   const captured = structuredClone(facts);
