@@ -50,6 +50,7 @@ export function errorShapeFromError(
   const ended = collectNestedErrorCandidates(error).find(
     (candidate) => candidate instanceof IncognitoSessionEndedError,
   );
+  const overload = resolveWorkerOverload(error);
   const shape =
     error instanceof AgentDatabaseAdmissionError
       ? createAgentDatabaseAdmissionErrorShape(error.refusal)
@@ -59,7 +60,14 @@ export function errorShapeFromError(
             retryable: false,
             details: { code: ended.code },
           })
-        : errorShape(code, message ?? formatErrorMessageWithCode(error), metadata);
+        : overload
+          ? errorShape(ErrorCodes.UNAVAILABLE, message ?? formatErrorMessageWithCode(error), {
+              ...metadata,
+              retryable: true,
+              retryAfterMs: overload.retryAfterMs,
+              details: { code: overload.code },
+            })
+          : errorShape(code, message ?? formatErrorMessageWithCode(error), metadata);
   copyErrorDiagnostic(error, shape);
   return shape;
 }

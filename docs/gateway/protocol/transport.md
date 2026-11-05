@@ -127,6 +127,12 @@ request never establishes trace context for later frames. Use a separate
 the WebSocket itself as one trace.
 
 Response errors use `{ code, message, details?, retryable?, retryAfterMs? }`.
+Worker capacity refusals that a method does not map itself return retryable
+`UNAVAILABLE` with `retryAfterMs: 1000` and `details.code` set to
+`sqlite-worker-overloaded` (SQLite worker capacity) or `worker-task-overloaded`
+(a worker task pool, such as session history or placement reads). Both are
+refused before the work starts, so the same request can be retried after that
+delay. Gateway HTTP routes answer the same refusals with `503` and `Retry-After: 1`.
 Authenticated operator requests share a bounded queue for starting RPC handlers.
 Ordinary requests have both aggregate and per-connection waiting limits, so
 concurrent Control UI setup can queue without giving one connection the entire

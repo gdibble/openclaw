@@ -1,6 +1,8 @@
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { SqliteWorkerError } from "../infra/sqlite-worker-contract.js";
+import { WorkerTaskError } from "../infra/worker-task-pool.js";
 import {
   AgentDatabaseAdmissionError,
   createAgentDatabaseInspectionRefusal,
@@ -102,4 +104,37 @@ it("returns a thrown pending admission as a retryable RPC response", async () =>
       retryAfterMs: 250,
     }),
   );
+});
+
+it.each([
+  [
+    "SQLite store",
+    () => new SqliteWorkerError("SQLite worker store capacity reached", "overloaded"),
+    "sqlite-worker-overloaded",
+  ],
+  [
+    "worker task",
+    () => new WorkerTaskError("worker task capacity reached", "overloaded"),
+    "worker-task-overloaded",
+  ],
+])("returns a thrown %s overload as a retryable RPC response", async (_, failure, code) => {
+  const respond = await dispatchThrowingHandler(failure());
+  expect(respond).toHaveBeenCalledOnce();
+  expect(respond).toHaveBeenCalledWith(
+    false,
+    undefined,
+    expect.objectContaining({
+      code: "UNAVAILABLE",
+      retryable: true,
+      retryAfterMs: 1000,
+      details: { code },
+    }),
+  );
+});
+
+it("leaves a thrown task timeout to the transport's generic failure", async () => {
+  const error = new WorkerTaskError("worker task timed out", "timeout");
+  const respond = vi.fn();
+  await expect(dispatchThrowingHandler(error, respond)).rejects.toBe(error);
+  expect(respond).not.toHaveBeenCalled();
 });

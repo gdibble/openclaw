@@ -23,7 +23,7 @@ import {
   CONTROL_PLANE_RATE_LIMIT_MAX_REQUESTS,
   CONTROL_PLANE_RATE_LIMIT_WINDOW_MS,
 } from "./control-plane-rate-limit.js";
-import { errorShapeFromError } from "./error-shape.js";
+import { errorShapeFromError, resolveWorkerOverload } from "./error-shape.js";
 import { createExpectedProfileBinding } from "./expected-profile.js";
 import { ADMIN_SCOPE } from "./method-scopes.js";
 import type { GatewayMethodRegistryView } from "./methods/descriptor.js";
@@ -541,7 +541,7 @@ export async function handleGatewayRequest(
         reject: (error) => respond(false, undefined, error),
       });
     } catch (error) {
-      if (error instanceof AgentDatabaseAdmissionError) {
+      if (error instanceof AgentDatabaseAdmissionError || resolveWorkerOverload(error)) {
         respond(false, undefined, errorShapeFromError(ErrorCodes.UNAVAILABLE, error));
         return;
       }
