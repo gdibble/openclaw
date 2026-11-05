@@ -4,6 +4,7 @@ import type {
   PortalOpenResult,
   PortalSummary,
 } from "../../../packages/gateway-protocol/src/index.js";
+import { WorkerTaskError } from "../../infra/worker-task-pool.js";
 import { resolveCoreOperatorGatewayMethodScope } from "../methods/core-method-policy.js";
 import type { GatewayPortalService } from "../portals/portal-service.js";
 import { createGatewayBroadcaster } from "../server-broadcast.js";
@@ -156,6 +157,23 @@ describe("portal gateway methods", () => {
       undefined,
       expect.objectContaining({ code: "UNAVAILABLE", message: "portal bind failed" }),
     );
+  });
+
+  it("answers a worker overload in portal.list as a retryable typed refusal", async () => {
+    const service = createService({
+      list: () => {
+        throw new WorkerTaskError("Placement read capacity reached", "overloaded");
+      },
+    });
+    // portal.list answered every failure as INVALID_REQUEST; a list changes nothing.
+    const response = await harness(service).invoke("portal.list", {});
+    expect(response).toHaveBeenCalledExactlyOnceWith(false, undefined, {
+      code: "UNAVAILABLE",
+      message: "WorkerTaskError: Placement read capacity reached",
+      retryable: true,
+      retryAfterMs: 1000,
+      details: { code: "worker-task-overloaded" },
+    });
   });
 
   it("delivers portal changes only to read-capable operators", () => {

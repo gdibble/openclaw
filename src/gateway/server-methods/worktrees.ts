@@ -17,6 +17,7 @@ import { managedWorktrees, WorktreeSnapshotError } from "../../agents/worktrees/
 import type { ManagedWorktreeService } from "../../agents/worktrees/service.js";
 import type { ManagedWorktreeRecord } from "../../agents/worktrees/types.js";
 import { resolveRecordedProjectRoot } from "../../projects/project-registry.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { ADMIN_SCOPE } from "../operator-scopes.js";
 import { requestGatewayWorktreeMaintenance } from "../worktree-maintenance.js";
 import {
@@ -239,7 +240,8 @@ export function createWorktreesHandlers(service: WorktreeService): GatewayReques
         respond(
           false,
           undefined,
-          errorShape(ErrorCodes.UNAVAILABLE, String(error), {
+          errorShapeFromError(ErrorCodes.UNAVAILABLE, error, {
+            message: String(error),
             ...(error instanceof WorktreeSnapshotError
               ? { details: { snapshotError: error.snapshotError } }
               : {}),

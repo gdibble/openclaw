@@ -47,6 +47,7 @@ import {
 import { isTrustedSecretSurfaceUnavailableError } from "../../secrets/runtime-degraded-state.js";
 import { prepareCurrentUserProfileAliases } from "../../state/user-profile-reads.js";
 import { configuredDefaultRepository } from "../configured-default-repository.js";
+import { errorShapeFromError } from "../error-shape.js";
 import {
   CONTROL_UI_GITHUB_CREDENTIAL_UNAVAILABLE_MESSAGE,
   gitHubPublicApi,
@@ -177,9 +178,10 @@ function sanitizeProjectRecord(project: ProjectRecord): ProjectRecord {
 }
 
 function projectCheckoutError(error: unknown) {
-  return errorShape(
+  return errorShapeFromError(
     error instanceof ProjectCheckoutError ? ErrorCodes.INVALID_REQUEST : ErrorCodes.UNAVAILABLE,
-    formatErrorMessage(error),
+    error,
+    { message: formatErrorMessage(error) },
   );
 }
 
@@ -520,7 +522,15 @@ export function createProjectsHandlers(service: ProjectWorktreeService): Gateway
         const stores = readMemoryProjectStores(assertCurrent);
         await list(stores, (keys) => assertMemoryProjectStoresCurrent(stores, keys, assertCurrent));
       } catch (error) {
-        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)));
+        // Listing changes nothing, so an overload may offer its retry.
+        respond(
+          false,
+          undefined,
+          errorShapeFromError(ErrorCodes.UNAVAILABLE, error, {
+            message: formatErrorMessage(error),
+            retryOverload: true,
+          }),
+        );
       } finally {
         diagnostics?.finish();
       }
@@ -635,7 +645,9 @@ export function createProjectsHandlers(service: ProjectWorktreeService): Gateway
                 retryable: failure.cause === "network" || failure.cause === "clone_failed",
               },
             )
-          : errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error));
+          : errorShapeFromError(ErrorCodes.UNAVAILABLE, error, {
+              message: formatErrorMessage(error),
+            });
       },
     ),
     "projects.searchRemote": defineValidatedGatewayHandler(

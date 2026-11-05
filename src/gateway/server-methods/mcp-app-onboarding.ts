@@ -1,8 +1,9 @@
 import { z } from "zod";
-import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/index.js";
+import { ErrorCodes } from "../../../packages/gateway-protocol/src/index.js";
 import { root } from "../../infra/fs-safe.js";
 import { getGatewayPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata-state.js";
 import { iteratePluginRootContributions } from "../../plugins/plugin-root-contributions.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { dispatchGatewayMethodInProcessRaw } from "../server-plugin-in-process-dispatch.js";
 import { readGatewayRequestMutationAuthority } from "./session-mutation-guards.js";
 import type { GatewayRequestHandlers } from "./types.js";
@@ -83,10 +84,9 @@ export const mcpAppOnboardingHandlers: GatewayRequestHandlers = {
       options.respond(
         false,
         undefined,
-        errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          error instanceof Error ? error.message : String(error),
-        ),
+        errorShapeFromError(ErrorCodes.INVALID_REQUEST, error, {
+          message: error instanceof Error ? error.message : String(error),
+        }),
       );
     }
   },

@@ -3,6 +3,7 @@ import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/i
 import { debugProxyCliCommandSchema } from "../../proxy-capture/cli-contract.js";
 import { captureOpenClawStateWorkerContext } from "../../state/openclaw-state-worker-context.js";
 import { runOpenClawStateWorkerOperation } from "../../state/openclaw-state-worker-store.js";
+import { errorShapeFromError } from "../error-shape.js";
 import {
   captureLocalStateMutationGuard,
   localStateOwnerChangedError,
@@ -43,7 +44,11 @@ export const debugProxyHandlers: GatewayRequestHandlers = {
       );
       options.respond(true, result ?? null);
     } catch (error) {
-      options.respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, String(error)));
+      options.respond(
+        false,
+        undefined,
+        errorShapeFromError(ErrorCodes.UNAVAILABLE, error, { message: String(error) }),
+      );
     }
   },
 };

@@ -18,6 +18,7 @@ import type {
   ManagedWorktreeGcResult,
   ManagedWorktreeRecord,
 } from "../../agents/worktrees/types.js";
+import { SqliteWorkerError } from "../../infra/sqlite-worker-contract.js";
 import { registerProjectRegistry, removeProjectRegistry } from "../../projects/project-registry.js";
 import {
   closeOpenClawStateDatabaseAsync,
@@ -345,6 +346,26 @@ describe("worktrees gateway methods", () => {
       true,
       { removed: false, snapshotError: "nested gitlink" },
       undefined,
+    ]);
+  });
+
+  it("keeps a worker overload's class in worktrees.remove without inviting a retry", async () => {
+    const service = {
+      remove: vi.fn(async () => {
+        throw new SqliteWorkerError("SQLite worker store capacity reached", "overloaded");
+      }),
+    };
+    const handlers = createWorktreesHandlers(service as never);
+    // Removal may have deleted the checkout before the refusal, so it never invites a retry.
+    expect(await call(handlers, "worktrees.remove", { id: record.id })).toEqual([
+      false,
+      undefined,
+      {
+        code: "UNAVAILABLE",
+        message: "SqliteWorkerError: SQLite worker store capacity reached",
+        retryable: false,
+        details: { code: "sqlite-worker-overloaded" },
+      },
     ]);
   });
 

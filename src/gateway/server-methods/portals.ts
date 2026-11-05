@@ -6,6 +6,7 @@ import {
   validatePortalListParams,
   validatePortalOpenParams,
 } from "../../../packages/gateway-protocol/src/index.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { ADMIN_SCOPE, WRITE_SCOPE } from "../operator-scopes.js";
 import {
   createPortalOperations,
@@ -130,7 +131,15 @@ export const portalHandlers: GatewayRequestHandlers = {
           scope.release();
         }
       } catch (error) {
-        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, String(error)));
+        // Listing changes nothing, so an overload may offer its retry.
+        respond(
+          false,
+          undefined,
+          errorShapeFromError(ErrorCodes.INVALID_REQUEST, error, {
+            message: String(error),
+            retryOverload: true,
+          }),
+        );
         return;
       }
       respond(

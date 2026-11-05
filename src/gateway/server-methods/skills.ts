@@ -26,6 +26,7 @@ import {
   collectClawHubVerdictTargets,
   fetchOpenClawSkillSecurityVerdicts,
 } from "../../skills/security/clawhub-verdicts.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { handleSkillsInstall } from "./skills-install.js";
 import { skillsLibraryHandlers } from "./skills-library.js";
 import { skillsRetiredHandlers } from "./skills-retired.js";
@@ -64,7 +65,15 @@ export const skillsHandlers: GatewayRequestHandlers = {
       const items = targets.length === 0 ? [] : await fetchOpenClawSkillSecurityVerdicts(targets);
       respond(true, { schema: "openclaw.skills.security-verdicts.v1", items }, undefined);
     } catch (error) {
-      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)));
+      // Workspace status preparation can meet worker capacity; verdict reads may retry.
+      respond(
+        false,
+        undefined,
+        errorShapeFromError(ErrorCodes.UNAVAILABLE, error, {
+          message: formatErrorMessage(error),
+          retryOverload: true,
+        }),
+      );
     }
   },
   "skills.skillCard": async ({ params, respond, context }) => {

@@ -15,6 +15,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { logWarn } from "../../logger.js";
 import { createLazyRuntimeMethod } from "../../shared/lazy-runtime.js";
+import { errorShapeFromError } from "../error-shape.js";
 import {
   executeMcpAppOperation,
   resolveMcpAppRequesterId,
@@ -163,13 +164,12 @@ function mcpAppHandler(
         undefined,
         error instanceof McpAppRequestError
           ? error.shape
-          : errorShape(
-              ErrorCodes.UNAVAILABLE,
-              formatErrorMessage(error),
-              error instanceof McpAppViewExpiredError
+          : errorShapeFromError(ErrorCodes.UNAVAILABLE, error, {
+              message: formatErrorMessage(error),
+              ...(error instanceof McpAppViewExpiredError
                 ? { details: { code: GatewayErrorDetailCodes.MCP_APP_VIEW_EXPIRED } }
-                : undefined,
-            ),
+                : {}),
+            }),
       );
     }
   };

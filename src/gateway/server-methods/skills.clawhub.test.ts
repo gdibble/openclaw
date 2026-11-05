@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { WorkerTaskError } from "../../infra/worker-task-pool.js";
 import { callGatewayHandler } from "./skills.test-helpers.js";
 
 const loadConfigMock = vi.fn(() => ({}));
@@ -112,6 +113,25 @@ describe("skills gateway handlers (clawhub)", () => {
     resolveAgentWorkspaceDirMock.mockReturnValue("/tmp/workspace");
     skillStatusReportMock.mockReturnValue(emptySkillStatusReport());
     resolveClawHubBaseUrlMock.mockReturnValue("https://clawhub.ai");
+  });
+
+  it("answers a workspace status overload in skills.securityVerdicts as a retryable refusal", async () => {
+    skillStatusReportMock.mockImplementationOnce(() => {
+      throw new WorkerTaskError("worker task capacity reached", "overloaded");
+    });
+
+    const { ok, error } = await callSkillsHandler("skills.securityVerdicts", {});
+
+    // Verdict reads change nothing, so the refusal invites the same request again.
+    expect(ok).toBe(false);
+    expect(error).toEqual({
+      code: "UNAVAILABLE",
+      message: "worker task capacity reached",
+      retryable: true,
+      retryAfterMs: 1000,
+      details: { code: "worker-task-overloaded" },
+    });
+    expect(fetchExactClawHubSkillSecurityVerdictsMock).not.toHaveBeenCalled();
   });
 
   it("keeps owner-qualified verdict targets distinct for shared slugs", async () => {

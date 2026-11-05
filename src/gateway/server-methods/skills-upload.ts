@@ -14,6 +14,7 @@ import {
 } from "../../skills/lifecycle/upload-install.js";
 import { SkillUploadRequestError } from "../../skills/lifecycle/upload-store-error.js";
 import { defaultSkillUploadStore } from "../../skills/lifecycle/upload-store.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { SessionMutationAuthorizationChangedError } from "../session-mutation-authorization-error.js";
 import { captureGatewayClientUploadCommitGuard } from "../upload-policy.js";
 import type { GatewayRequestHandlers } from "./types.js";
@@ -26,7 +27,7 @@ function mapUploadError(err: unknown): ErrorShape {
   if (err instanceof SkillUploadRequestError) {
     return errorShape(ErrorCodes.INVALID_REQUEST, err.message);
   }
-  return errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(err));
+  return errorShapeFromError(ErrorCodes.UNAVAILABLE, err, { message: formatErrorMessage(err) });
 }
 
 export const skillsUploadHandlers: GatewayRequestHandlers = {

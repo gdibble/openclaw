@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { ResourceLinkSchema } from "@modelcontextprotocol/sdk/types.js";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { z } from "zod";
-import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/index.js";
+import { ErrorCodes } from "../../../packages/gateway-protocol/src/index.js";
 import { runWithSessionMcpRequestSignal } from "../../agents/agent-bundle-mcp-request-context.js";
 import type { McpCatalogTool } from "../../agents/agent-bundle-mcp-types.js";
 import { readMcpAppSettings } from "../../agents/mcp-app-extension-metadata.js";
@@ -16,6 +16,7 @@ import { logWarn } from "../../logger.js";
 import { getGatewayPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata-state.js";
 import { iteratePluginRootContributions } from "../../plugins/plugin-root-contributions.js";
 import type { McpAppDiscoverResult } from "../../shared/mcp-app-extensions.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { prepareMcpAppExtensionRuntime } from "../mcp-app-extension-runtime.js";
 import { prepareMcpAppHostFile } from "../mcp-app-host-files.js";
 import { callMcpAppToolWithElicitation } from "../mcp-app-operations.js";
@@ -190,12 +191,15 @@ function handler<T>(
       options.respond(
         false,
         undefined,
-        errorShape(
+        errorShapeFromError(
           error instanceof z.ZodError ? ErrorCodes.INVALID_REQUEST : ErrorCodes.UNAVAILABLE,
-          error instanceof Error ? error.message : String(error),
-          error instanceof UnsupportedMcpMentionResultError
-            ? { details: { code: "MCP_APP_UNSUPPORTED_MENTION_RESULT" } }
-            : undefined,
+          error,
+          {
+            message: error instanceof Error ? error.message : String(error),
+            ...(error instanceof UnsupportedMcpMentionResultError
+              ? { details: { code: "MCP_APP_UNSUPPORTED_MENTION_RESULT" } }
+              : {}),
+          },
         ),
       );
     } finally {

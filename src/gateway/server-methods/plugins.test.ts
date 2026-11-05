@@ -4,6 +4,7 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { Compile } from "typebox/compile";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PluginsListResultSchema } from "../../../packages/gateway-protocol/src/schema/plugins.js";
+import { SqliteWorkerError } from "../../infra/sqlite-worker-contract.js";
 import { encodePluginDiscoveryId } from "../../plugins/catalog-discovery.js";
 import { emptyInstalledPluginComponents } from "../../plugins/installed-plugin-components.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
@@ -96,6 +97,31 @@ describe("plugin management Gateway handlers", () => {
     catalogMocks.categories.mockReset();
     catalogMocks.overview.mockReset();
     catalogMocks.detail.mockReset();
+  });
+
+  it.each([
+    { method: "plugins.list", params: {}, owner: managementMocks.list },
+    {
+      method: "plugins.inspect",
+      params: { pluginId: "workboard" },
+      owner: managementMocks.inspect,
+    },
+  ])("answers a plugin metadata overload in $method as a retryable typed refusal", async (row) => {
+    row.owner.mockRejectedValueOnce(
+      new SqliteWorkerError("SQLite worker store capacity reached", "overloaded"),
+    );
+    // Plugin reads change nothing, so the refusal invites the same request again.
+    expect(await callHandler(row.method, row.params)).toEqual({
+      ok: false,
+      response: undefined,
+      error: {
+        code: "UNAVAILABLE",
+        message: "SQLite worker store capacity reached",
+        retryable: true,
+        retryAfterMs: 1000,
+        details: { code: "sqlite-worker-overloaded" },
+      },
+    });
   });
 
   it("returns observed SDK compatibility per plugin without changing runtime state", async () => {

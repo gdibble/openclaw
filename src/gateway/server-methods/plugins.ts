@@ -39,18 +39,28 @@ import { getPluginRegistryForContext } from "../../plugins/runtime/gateway-reque
 import { buildPluginSdkDeprecationNotices } from "../../plugins/sdk-deprecation-notices.js";
 import { listPluginServiceHealthFailures } from "../../plugins/service-health.js";
 import { validatePluginSkillPath } from "../../skills/loading/plugin-skill-bundle.js";
+import { errorShapeFromError } from "../error-shape.js";
 import { catalogHandlers } from "./catalog.js";
 import { pluginCredentialHandlers } from "./plugins.credentials.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import { defineValidatedGatewayHandler } from "./validation.js";
 
+// Plugin reads change nothing, so a metadata store overload may offer its retry.
 function pluginReadError(error: unknown) {
-  return errorShape(
+  return errorShapeFromError(
     error instanceof ManagedPluginLifecycleError && error.kind === "invalid-request"
       ? ErrorCodes.INVALID_REQUEST
       : ErrorCodes.UNAVAILABLE,
-    formatErrorMessage(error),
+    error,
+    { message: formatErrorMessage(error), retryOverload: true },
   );
+}
+
+function pluginListError(error: unknown) {
+  return errorShapeFromError(ErrorCodes.UNAVAILABLE, error, {
+    message: formatErrorMessage(error),
+    retryOverload: true,
+  });
 }
 
 function pluginCatalogError(subject: "discovery is" | "categories are" | "details are") {
@@ -150,7 +160,7 @@ export const pluginsHandlers: GatewayRequestHandlers = {
         undefined,
       );
     },
-    (error) => errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)),
+    pluginListError,
   ),
   "plugins.inspect": defineValidatedGatewayHandler(
     "plugins.inspect",

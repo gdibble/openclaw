@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpToolCatalog } from "../../agents/agent-bundle-mcp-types.js";
 import { readMcpAppToolExtensions } from "../../agents/mcp-app-extension-metadata.js";
+import { WorkerTaskError } from "../../infra/worker-task-pool.js";
 import { createCoreGatewayMethodDescriptors } from "../methods/core-method-policy.js";
 import { createGatewayMethodRegistry } from "../methods/registry.js";
 import { mcpAppExtensionHandlers } from "./mcp-app-extensions.js";
@@ -337,6 +338,23 @@ describe("registered MCP App extensions", () => {
       );
     },
   );
+  it("keeps a worker overload's class when runtime preparation is refused", async () => {
+    mocks.prepare.mockRejectedValueOnce(
+      new WorkerTaskError("Session row preparation capacity reached", "overloaded"),
+    );
+    const response = await invoke("mcp.app.launch", {
+      serverName: "demo",
+      toolName: "show",
+      entrypointType: "global",
+    });
+    // One handler serves launches and tool calls too, so it never invites a retry itself.
+    expect(response).toHaveBeenCalledExactlyOnceWith(false, undefined, {
+      code: "UNAVAILABLE",
+      message: "Session row preparation capacity reached",
+      details: { code: "worker-task-overloaded" },
+    });
+  });
+
   it("does not return protected data after revocation during the call", async () => {
     mocks.call.mockImplementation(async () => {
       mocks.assert.mockImplementation(() => {
