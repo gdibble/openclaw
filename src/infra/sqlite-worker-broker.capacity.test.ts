@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { expect, it, vi } from "vitest";
+import * as logger from "../logging/logger.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { initializeSqliteRuntimeCapabilities } from "./bun-sqlite-library.js";
 import {
   captureSqliteWorkerOpen,
   reclaimSqliteWorkerClient,
   reserveSqliteWorkerClient,
+  resolveSqliteWorkerMaxStores,
 } from "./sqlite-worker-broker-admission.js";
 import { SqliteWorkerBroker } from "./sqlite-worker-broker.js";
 import { createSqliteWorkerClient } from "./sqlite-worker-client.js";
@@ -39,6 +41,57 @@ function capacityFixture() {
     reclaimSqliteWorkerClient(options, [client], reserve, isClosing);
   return { options, client, retirement, reservations, reserve, reclaim };
 }
+
+it.each([
+  { configured: undefined, limit: 64, warned: false },
+  { configured: " 256 ", limit: 256, warned: false },
+  { configured: "4096", limit: 1024, warned: true },
+  { configured: "8", limit: 16, warned: true },
+  { configured: "many", limit: 64, warned: true },
+])("sizes the client budget from OPENCLAW_SQLITE_WORKER_MAX_STORES=$configured", (row) => {
+  const warn = vi.fn();
+  vi.spyOn(logger, "getChildLogger").mockReturnValue({ warn } as never);
+  expect(resolveSqliteWorkerMaxStores({ OPENCLAW_SQLITE_WORKER_MAX_STORES: row.configured })).toBe(
+    row.limit,
+  );
+  expect(warn).toHaveBeenCalledTimes(row.warned ? 1 : 0);
+});
+
+it("offers the least recently used idle client for reclamation first", async () => {
+  const retired: string[] = [];
+  const reservations = new Set<object>();
+  const clients = ["recent", "cold"].map((name) => {
+    const actor = createSqliteWorkerClientActor();
+    const { client, store } = createSqliteWorkerClient({
+      actor,
+      isDraining: () => false,
+      isAvailable: () => true,
+      dispatch: async () => undefined,
+      release: async () => {
+        reservations.delete(client);
+      },
+      retireIdle: (): Promise<void> => {
+        retired.push(name);
+        return store.close();
+      },
+    });
+    reservations.add(client);
+    return { client, store };
+  });
+  // Opened first, used last: insertion order alone would retire the hot client.
+  await clients[0]!.store.execute({ type: "read", input: undefined });
+  const actor = createSqliteWorkerClientActor();
+  const options = captureSqliteWorkerOpen({
+    moduleUrl: new URL(actor.moduleUrl),
+    databasePath: actor.databasePath,
+    input: undefined,
+  });
+  const stores = clients.map(({ client }) => client);
+  const reserve = () => reserveSqliteWorkerClient(reservations, stores, 2, {});
+  await reclaimSqliteWorkerClient(options, stores, reserve, () => false);
+  expect(retired).toEqual(["cold"]);
+  expect(reservations.has(clients[0]!.client)).toBe(true);
+});
 
 it("waits for retirement and atomically reserves the released capacity", async () => {
   const f = capacityFixture();
@@ -154,6 +207,28 @@ it("joins host drainage during reclamation without cycling through open admissio
     await expect(broker.open(options)).rejects.toMatchObject({ code: "closed" });
     expect(draining).toBeDefined();
     await draining;
+  } finally {
+    await broker.close();
+  }
+});
+
+it("admits clients up to the configured budget before refusing as overloaded", async () => {
+  vi.stubEnv("OPENCLAW_SQLITE_WORKER_MAX_STORES", "16");
+  const broker = new SqliteWorkerBroker();
+  vi.unstubAllEnvs();
+  const options = {
+    moduleUrl: new URL("./sqlite-worker-store.test-support.ts", import.meta.url),
+    databasePath: databasePath(),
+    input: undefined,
+  };
+  try {
+    for (let index = 0; index < 16; index++) {
+      await broker.open(options);
+    }
+    await expect(broker.open(options)).rejects.toMatchObject({
+      code: "overloaded",
+      message: "SQLite worker store capacity reached",
+    });
   } finally {
     await broker.close();
   }

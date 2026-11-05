@@ -8,6 +8,7 @@ import { runtimeNeedsTypeScriptLoader } from "./runtime-worker-url.js";
 import { runWithSqliteDatabaseAdmissionTurn } from "./sqlite-database-admission-turn.js";
 import {
   SQLITE_WORKER_ADMISSION_TIMEOUT_MS as ADMISSION_TIMEOUT_MS,
+  SQLITE_WORKER_DEFAULT_MAX_STORES,
   assertSqliteWorkerActorReusable,
   createSqliteWorkerAdmissionWarning,
   captureSqliteWorkerOpen,
@@ -18,6 +19,7 @@ import {
   reclaimSqliteWorkerClient,
   reserveSqliteWorkerClient,
   resolveOpenedSqliteWorkerIdentity,
+  resolveSqliteWorkerMaxStores,
   resolveSqliteWorkerModuleUrl,
   retainSqliteWorkerAdmissionCleanup,
   retainSqliteWorkerAdmissionPathReferences,
@@ -63,7 +65,6 @@ import { sqliteWorkerRequestBytes } from "./sqlite-worker-state-context.js";
 import { resolveSqliteBrokerWorkerCount } from "./worker-pool-sizing.js";
 import { trackWorkerRequest, type WorkerRequestObservation } from "./worker-request-diagnostics.js";
 
-const MAX_STORES = 64;
 const MAX_QUEUED_COMMAND_BYTES = 64 * 1024 * 1024;
 export const SQLITE_WORKER_MAX_REQUESTS_PER_WORKER = 128;
 const SQLITE_WORKER_MAX_QUEUED_BYTES = 256 * 1024 * 1024;
@@ -76,6 +77,9 @@ export class SqliteWorkerBroker {
   private readonly explicitSqliteCloseReleasesNativeResources = captureSqliteWorkerClosePolicy();
   // WAL readers on independent actors can progress on separate threads without blocking writers.
   private readonly maxWorkers = resolveSqliteBrokerWorkerCount();
+  private readonly maxStores = resolveSqliteWorkerMaxStores();
+  // Hosts without shared workers spend a thread per database; a raised budget keeps that cap.
+  private readonly maxDedicatedWorkers = Math.min(this.maxStores, SQLITE_WORKER_DEFAULT_MAX_STORES);
   private readonly waiters = new Map<Slot, Set<(error?: unknown) => void>>();
   private readonly resuming = new Set<Slot>();
   private readonly warnAdmission = createSqliteWorkerAdmissionWarning();
@@ -104,7 +108,7 @@ export class SqliteWorkerBroker {
     maxQueuedBytes: SQLITE_WORKER_MAX_QUEUED_BYTES,
     maxQueuedInputBytes: MAX_QUEUED_COMMAND_BYTES,
     maxMessageBytes: SQLITE_WORKER_MAX_MESSAGE_BYTES,
-    maxPendingOpens: MAX_STORES,
+    maxPendingOpens: this.maxStores,
   });
   private draining?: Promise<void>;
 
@@ -130,10 +134,12 @@ export class SqliteWorkerBroker {
       return Promise.reject(new SqliteWorkerError("SQLite worker host is closing", "closed"));
     }
     const client = {};
+    const reserve = () =>
+      reserveSqliteWorkerClient(this.clients, this.stores.values(), this.maxStores, client);
     let reserved: boolean;
     let snapshot: PreparedSqliteWorkerOpen;
     try {
-      reserved = reserveSqliteWorkerClient(this.clients, this.stores.values(), MAX_STORES, client);
+      reserved = reserve();
       snapshot = captureSqliteWorkerOpen(options, stateContext, assertCurrent, custody);
       const generation = options.runtimeGeneration;
       generation?.retain(this, async () => {
@@ -153,8 +159,7 @@ export class SqliteWorkerBroker {
             await reclaimSqliteWorkerClient(
               snapshot,
               this.stores.values(),
-              () =>
-                reserveSqliteWorkerClient(this.clients, this.stores.values(), MAX_STORES, client),
+              reserve,
               () => this.draining !== undefined,
             );
           }
@@ -248,7 +253,7 @@ export class SqliteWorkerBroker {
     } else {
       const slot = await this.lifecycle.acquireSlot(
         options,
-        { maxWorkers: this.maxWorkers, maxStores: MAX_STORES },
+        { maxWorkers: this.maxWorkers, maxStores: this.maxDedicatedWorkers },
         (replySlot) => this.createReplyOwner(replySlot),
       );
       try {

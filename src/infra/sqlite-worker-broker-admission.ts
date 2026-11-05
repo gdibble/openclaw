@@ -4,6 +4,10 @@ import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { serialize } from "node:v8";
+import {
+  parseStrictPositiveInteger,
+  resolveIntegerOption,
+} from "@openclaw/normalization-core/number-coercion";
 import { getChildLogger } from "../logging/logger.js";
 import { INCOGNITO_AGENT_SQLITE_BASENAME } from "../state/openclaw-agent-db.paths.js";
 import { getOpenClawDatabaseMaintenanceScope } from "../state/openclaw-state-db-async-lifecycle.js";
@@ -25,6 +29,28 @@ import {
 } from "./sqlite-worker-state-context.js";
 
 export const SQLITE_WORKER_ADMISSION_TIMEOUT_MS = 10_000;
+export const SQLITE_WORKER_DEFAULT_MAX_STORES = 64;
+const SQLITE_WORKER_MAX_STORES_RANGE = { min: 16, max: 1024 };
+
+/** Size the client budget once per broker; installs with many agents raise it before start. */
+export function resolveSqliteWorkerMaxStores(env: NodeJS.ProcessEnv = process.env): number {
+  const configured = env.OPENCLAW_SQLITE_WORKER_MAX_STORES?.trim();
+  if (!configured) {
+    return SQLITE_WORKER_DEFAULT_MAX_STORES;
+  }
+  const parsed = parseStrictPositiveInteger(configured);
+  const limit = resolveIntegerOption(
+    parsed,
+    SQLITE_WORKER_DEFAULT_MAX_STORES,
+    SQLITE_WORKER_MAX_STORES_RANGE,
+  );
+  if (limit !== parsed) {
+    getChildLogger({ subsystem: "infra/sqlite-worker" }).warn(
+      `OPENCLAW_SQLITE_WORKER_MAX_STORES must be an integer from ${SQLITE_WORKER_MAX_STORES_RANGE.min} to ${SQLITE_WORKER_MAX_STORES_RANGE.max}; using ${limit}`,
+    );
+  }
+  return limit;
+}
 
 export function createSqliteWorkerAdmissionWarning() {
   let nextWarning = 0;
@@ -84,7 +110,8 @@ export async function reclaimSqliteWorkerClient(
     }
   };
   assertCurrent();
-  for (const store of stores) {
+  // Owners confirm idleness; the coldest client is the cheapest one to reopen later.
+  for (const store of [...stores].toSorted((left, right) => left.lastUsed - right.lastUsed)) {
     if (tryReserve()) {
       return;
     }

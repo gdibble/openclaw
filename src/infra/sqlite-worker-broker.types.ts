@@ -124,6 +124,8 @@ export type StoreClient = {
   actor: Actor;
   close(): Promise<void>;
   retireIdle?: () => Promise<void> | undefined;
+  /** Process-wide use order; capacity reclamation offers the least recent client first. */
+  lastUsed: number;
   sealed: boolean;
   isAvailable(): boolean;
   scopes: Set<Promise<void>>;

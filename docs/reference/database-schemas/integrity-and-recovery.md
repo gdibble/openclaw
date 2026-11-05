@@ -799,12 +799,23 @@ a later request opens a replacement actor. An actor that returns from an
 operation with a tracked reader still active fails settlement and retires
 immediately.
 
-At the broker's 64-client limit, new opens can retire an owner-confirmed idle
-shared-state client before its normal deadline. Accepted scopes, pending commands,
-maintenance clients, and clients from another runtime generation are protected.
-Retirement joins native cleanup before admission resumes, and later use reopens
-the retired client transparently. If no client is eligible, the capacity refusal
-remains; the limit and stored data do not change.
+### SQLite worker store capacity reached
+
+The broker admits 64 open clients by default. Every open handle counts, including
+several handles to one database. Installs that keep many agent databases busy at
+once can set `OPENCLAW_SQLITE_WORKER_MAX_STORES` to an integer from 16 to 1024
+before the Gateway starts; other values fall back to the nearest bound or the
+default with a warning. Hosts without shared SQLite workers, such as Bun without
+native close, still run at most 64 dedicated database workers.
+
+At the client limit, new opens can retire an owner-confirmed idle shared-state
+client before its normal deadline, least recently used first. Accepted scopes,
+pending commands, maintenance clients, and clients from another runtime
+generation are protected. Retirement joins native cleanup before admission
+resumes, and later use reopens the retired client transparently. The broker
+never closes a client its owner has not confirmed idle. If no client is
+eligible, the open fails as overloaded, and Gateway HTTP routes answer `503`
+with `Retry-After`. Stored data does not change.
 
 Observations belong to the open database handle in the Gateway process. They
 reset when that handle is replaced or the Gateway restarts. Status and Doctor

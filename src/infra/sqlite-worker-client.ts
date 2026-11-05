@@ -60,6 +60,8 @@ export function runSqliteWorkerClientOperation<Operations extends SqliteWorkerOp
   })();
 }
 
+let nextUse = 0;
+
 export function createSqliteWorkerClient<Operations extends SqliteWorkerOperations>(owner: {
   actor: Actor;
   isDraining: () => boolean;
@@ -94,6 +96,7 @@ export function createSqliteWorkerClient<Operations extends SqliteWorkerOperatio
           }
         }
       : undefined,
+    lastUsed: ++nextUse,
     sealed: owner.isDraining(),
     isAvailable: owner.isAvailable,
     scopes: new Set(),
@@ -135,6 +138,7 @@ export function createSqliteWorkerClient<Operations extends SqliteWorkerOperatio
           : undefined,
         requestClass,
       );
+      client.lastUsed = ++nextUse;
       pending.add(operation);
       scope?.pending.add(operation);
       const settled = () => {
