@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SqliteWorkerError } from "../../infra/sqlite-worker-contract.js";
 import { cancelPendingConversationTurn } from "../../sessions/conversation-turns.js";
 import {
   ConversationInputError,
@@ -171,6 +172,26 @@ describe("conversations.list Gateway handler", () => {
       undefined,
       expect.objectContaining({ code: "INVALID_REQUEST" }),
     );
+  });
+
+  it("answers a conversation store overload as typed UNAVAILABLE without inviting a retry", async () => {
+    vi.mocked(runGatewayConversationList).mockRejectedValueOnce(
+      new SqliteWorkerError("SQLite worker store capacity reached", "overloaded"),
+    );
+    const respond = vi.fn<RespondFn>();
+
+    await invokeList({
+      handler: conversationHandlers["conversations.list"]!,
+      context: context(),
+      respond,
+    });
+
+    // Discovery may register what it found before the refusal, so no retry is offered.
+    expect(respond).toHaveBeenCalledExactlyOnceWith(false, undefined, {
+      code: "UNAVAILABLE",
+      message: "SQLite worker store capacity reached",
+      details: { code: "sqlite-worker-overloaded" },
+    });
   });
 });
 

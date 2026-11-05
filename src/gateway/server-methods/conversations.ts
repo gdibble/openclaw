@@ -189,8 +189,12 @@ export const conversationHandlers: GatewayRequestHandlers = {
         undefined,
       );
     },
+    // Discovery may register the addresses it finds, so an overload keeps its class but
+    // offers no retry, as for the other methods that change state.
     (cause) =>
-      errorShape(ErrorCodes.UNAVAILABLE, cause instanceof Error ? cause.message : String(cause)),
+      errorShapeFromError(ErrorCodes.UNAVAILABLE, cause, {
+        message: cause instanceof Error ? cause.message : String(cause),
+      }),
   ),
   "conversations.send": defineValidatedGatewayMethod(
     "conversations.send",
