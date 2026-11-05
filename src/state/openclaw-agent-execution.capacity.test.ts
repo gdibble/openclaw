@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
+import { withinTest } from "../../test/helpers/promise.js";
 import { SqliteWorkerBroker } from "../infra/sqlite-worker-broker.js";
 import { useSqliteWorkerStoreFixture } from "../infra/sqlite-worker-fixture.test-support.js";
 import { createSqliteWorkerOperationAdmission } from "../infra/sqlite-worker-operation-admission.js";
@@ -74,7 +75,9 @@ it("retires a parked agent executor when ordinary opens reach the broker client 
   }
 });
 
-it("admits the reclaiming open before the retired executor's lease cleanup settles", async () => {
+it("admits the reclaiming open before the retired executor's lease cleanup settles", async ({
+  signal,
+}) => {
   const env = { OPENCLAW_STATE_DIR: fs.realpathSync(fixture.tempDirs.make("agent-capacity-")) };
   const generations = vi.spyOn(native, "createAgentDatabaseNativeGeneration");
   const parked = captureOpenClawAgentDatabaseExecution({ agentId: "parked", env });
@@ -91,15 +94,15 @@ it("admits the reclaiming open before the retired executor's lease cleanup settl
     await leaseCleanup.promise;
   });
 
+  const filling = fillUntilRefused();
   let refusal: unknown;
-  const filling = fillUntilRefused().then((error) => {
-    refusal = error;
-  });
   try {
-    await vi.waitFor(() => expect(refusal).toBeDefined(), { timeout: 10_000 });
+    // Lease cleanup stays pending until the fill settles. No deadline: an open that waited
+    // for it would never settle and fail at the test timeout, not race a loaded runner.
+    refusal = await withinTest(filling, signal);
   } finally {
     leaseCleanup.resolve();
-    await filling;
+    await Promise.allSettled([filling]);
   }
   expect(refusal).toMatchObject({ code: "overloaded" });
   expect(close).toHaveBeenCalledOnce();
