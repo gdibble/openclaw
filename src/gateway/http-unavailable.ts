@@ -1,13 +1,11 @@
 import type { ServerResponse } from "node:http";
-import { isSqliteWorkerError } from "../infra/sqlite-worker-contract.js";
 import {
   AgentDatabaseAdmissionError,
   createAgentDatabaseAdmissionErrorShape,
   type AgentDatabaseAdmissionRefusal,
 } from "../state/agent-database-admission.js";
+import { resolveWorkerOverload } from "./error-shape.js";
 import { prepareGatewayHttpErrorResponse, sendJson } from "./http-common.js";
-
-const SQLITE_WORKER_OVERLOADED_RETRY_AFTER_MS = 1_000;
 
 /** HTTP form of the RPC `UNAVAILABLE` shape for storage admission refusals. */
 export type GatewayHttpUnavailableError = {
@@ -46,15 +44,15 @@ export function resolveGatewayHttpUnavailableError(
       details: { code: refusal.code, agentId: refusal.agentId },
     };
   }
-  // Cleanup aggregates do not certify non-execution, so they keep the generic failure.
-  if (isSqliteWorkerError(error, "overloaded")) {
+  const overload = resolveWorkerOverload(error);
+  if (overload) {
     return {
-      message: error.message,
+      message: overload.message,
       type: "service_unavailable",
       code: "UNAVAILABLE",
       retryable: true,
-      retryAfterMs: SQLITE_WORKER_OVERLOADED_RETRY_AFTER_MS,
-      details: { code: "sqlite-worker-overloaded" },
+      retryAfterMs: overload.retryAfterMs,
+      details: { code: overload.code },
     };
   }
   return undefined;

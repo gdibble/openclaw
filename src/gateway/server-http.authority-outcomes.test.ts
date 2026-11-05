@@ -9,6 +9,7 @@ import {
 } from "../infra/diagnostic-events.js";
 import * as lifecycle from "../infra/http-request-lifecycle.js";
 import { SqliteWorkerError } from "../infra/sqlite-worker-contract.js";
+import { WorkerTaskError } from "../infra/worker-task-pool.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { AsyncWorkScope, getAsyncWorkSignal, trackAsyncWork } from "../shared/async-work-scope.js";
@@ -339,6 +340,7 @@ const storageRefusals = {
     ),
   "store capacity": () =>
     new SqliteWorkerError("SQLite worker store capacity reached", "overloaded"),
+  "task capacity": () => new WorkerTaskError("worker task capacity reached", "overloaded"),
 };
 
 it.each(
@@ -379,16 +381,45 @@ it.each(
               retryable: false,
               details: { code: "agent-database-ownership-mismatch", agentId: "main" },
             }
-          : {
-              message: "SQLite worker store capacity reached",
-              retryable: true,
-              retryAfterMs: 1000,
-              details: { code: "sqlite-worker-overloaded" },
-            }),
+          : refusal === "store capacity"
+            ? {
+                message: "SQLite worker store capacity reached",
+                retryable: true,
+                retryAfterMs: 1000,
+                details: { code: "sqlite-worker-overloaded" },
+              }
+            : {
+                message: "worker task capacity reached",
+                retryable: true,
+                retryAfterMs: 1000,
+                details: { code: "worker-task-overloaded" },
+              }),
     },
   });
   expect(errors).not.toHaveBeenCalled();
   expect(warnings).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["a task timeout", () => new WorkerTaskError("worker task timed out", "timeout")],
+  [
+    "a cleanup aggregate",
+    () =>
+      new AggregateError(
+        [new WorkerTaskError("worker task capacity reached", "overloaded"), new Error("cleanup")],
+        "operation and cleanup failed",
+      ),
+  ],
+])("keeps the generic 500 for %s, which does not certify non-execution", async (_, failure) => {
+  const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  route.mockImplementation(async () => {
+    throw failure();
+  });
+  const response = await fetch(`http://127.0.0.1:${listener.claim.port}/authority/core`);
+  expect(response.status).toBe(500);
+  expect(response.headers.get("retry-after")).toBeNull();
+  expect(await response.text()).toBe("Internal Server Error");
+  expect(errors).toHaveBeenCalledOnce();
 });
 
 // Each request owner consumes both authority error types and preserves unexpected errors.
