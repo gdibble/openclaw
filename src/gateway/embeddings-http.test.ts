@@ -617,24 +617,28 @@ describe("OpenAI-compatible embeddings HTTP API (e2e)", () => {
         'No API key found for provider "openai". Configure an API key (openclaw models auth paste-api-key --provider openai).',
       status: 401,
       type: "authentication_error",
+      reason: "auth",
     },
     {
       phase: "embedding",
       message: "503 service unavailable",
       status: 503,
       type: "api_error",
+      reason: "overloaded",
       publicMessage: "upstream provider overloaded",
     },
   ])(
     "maps $phase failure to $status $type",
-    async ({ phase, message, status, type, publicMessage }) => {
+    async ({ phase, message, status, type, reason, publicMessage }) => {
       const failingOperation = phase === "setup" ? createEmbeddingProviderMock : embedBatchMock;
       failingOperation.mockRejectedValueOnce(new Error(message));
 
       const res = await postEmbeddings({ model: "openclaw/default", input: "hello" });
 
       expect(res.status).toBe(status);
-      expect(await res.json()).toEqual({ error: { type, message: publicMessage ?? message } });
+      expect(await res.json()).toEqual({
+        error: { type, message: publicMessage ?? message, reason },
+      });
     },
   );
 

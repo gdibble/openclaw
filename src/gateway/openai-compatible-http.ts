@@ -23,9 +23,11 @@ import {
   authorizeOpenAiCompatibleHttpModelOverride,
   resolveOpenAiCompatibleHttpSenderIsOwner,
 } from "./http-utils.js";
+import type { OpenAiCompatError } from "./openai-compat-errors.js";
 import {
   readOpenAiHttpRunTerminal,
   resolveOpenAiCompatibleAgentError,
+  resolveOpenAiCompatibleRunFailure,
   type OpenAiCompatiblePendingToolCall,
 } from "./openai-compatible-agent-run.js";
 import {
@@ -33,7 +35,7 @@ import {
   type ToolChoiceConstraint,
 } from "./openai-tool-choice.js";
 
-type StreamError = { message: string; type: string; code?: string };
+type StreamError = OpenAiCompatError["error"];
 type StreamResult = {
   result: unknown;
   stopReason: string | undefined;
@@ -81,6 +83,14 @@ export async function sendOpenAiCompatibleJsonResponse(params: {
   ) => void;
   fail?: (error: ReturnType<typeof resolveOpenAiCompatibleAgentError>) => void;
 }): Promise<true> {
+  const respond = (mapped: ReturnType<typeof resolveOpenAiCompatibleAgentError>) => {
+    setGatewayHttpRetryAfter(params.res, mapped.error.retryAfterMs);
+    if (params.fail) {
+      params.fail(mapped);
+    } else {
+      sendJson(params.res, mapped.status, { error: mapped.error });
+    }
+  };
   try {
     const result = await params.run();
     if (params.signal.aborted) {
@@ -88,7 +98,9 @@ export async function sendOpenAiCompatibleJsonResponse(params: {
     }
     const { runFailed, stopReason, pendingToolCalls } = readOpenAiHttpRunTerminal(result);
     if (runFailed) {
-      throw new Error("agent run failed");
+      logWarn(`${params.failureLabel}: agent run failed`);
+      respond(resolveOpenAiCompatibleRunFailure(result));
+      return true;
     }
     params.complete({
       result,
@@ -101,13 +113,7 @@ export async function sendOpenAiCompatibleJsonResponse(params: {
   } catch (error) {
     if (!params.signal.aborted) {
       logWarn(`${params.failureLabel}: ${String(error)}`);
-      const mapped = resolveOpenAiCompatibleAgentError(error);
-      setGatewayHttpRetryAfter(params.res, mapped.error.retryAfterMs);
-      if (params.fail) {
-        params.fail(mapped);
-      } else {
-        sendJson(params.res, mapped.status, { error: mapped.error });
-      }
+      respond(resolveOpenAiCompatibleAgentError(error));
     }
   }
   return true;
@@ -248,7 +254,7 @@ export function startOpenAiCompatibleStream(params: {
       const { runFailed, stopReason, pendingToolCalls } = readOpenAiHttpRunTerminal(result);
       if (runFailed) {
         terminalPhase = "error";
-        fail({ message: "internal error", type: "api_error" }, result);
+        fail(resolveOpenAiCompatibleRunFailure(result).error, result);
         return;
       }
       if (chat && streamError) {

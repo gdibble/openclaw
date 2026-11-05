@@ -13,6 +13,10 @@ export type OpenAiCompatError = {
     message: string;
     type: string;
     code?: string;
+    /** Protocol failover class of the provider failure. */
+    reason?: FailoverReason;
+    /** Provider id that produced the classified failure. */
+    provider?: string;
   } & Partial<Pick<GatewayHttpUnavailableError, "retryable" | "retryAfterMs" | "details">>;
 };
 
@@ -49,20 +53,44 @@ export function resolveOpenAiCompatError(err: unknown): OpenAiCompatError | unde
     return { status: 403, error: { message: err.message, type: "permission_error" } };
   }
   const described = describeFailoverError(err);
-  const reason = described.reason;
-  if (!reason) {
+  if (!described.reason || !ERROR_TYPE_BY_REASON[described.reason]) {
     return undefined;
   }
+  const { reason, status, code, provider } = described;
+  return resolveOpenAiCompatFailover(
+    { reason, status, code, provider },
+    described.rawError?.trim() || described.message.trim() || "request failed",
+  );
+}
+
+/** Classified provider failure facts; raw provider text crosses only as an explicit detail. */
+export type OpenAiCompatFailover = {
+  reason: FailoverReason;
+  status?: number;
+  code?: string;
+  provider?: string;
+};
+
+/** One reason policy for thrown failovers and resolved failed runs. */
+export function resolveOpenAiCompatFailover(
+  failure: OpenAiCompatFailover,
+  detail?: string,
+): OpenAiCompatError {
+  const { reason } = failure;
+  const identity = {
+    reason,
+    ...(failure.provider ? { provider: redactToolPayloadText(failure.provider) } : {}),
+  };
   const type = ERROR_TYPE_BY_REASON[reason];
   if (!type) {
-    return undefined;
+    return { status: 500, error: { message: "internal error", type: "api_error", ...identity } };
   }
-  let status = described.status ?? resolveFailoverStatus(reason) ?? 500;
+  let status = failure.status ?? resolveFailoverStatus(reason) ?? 500;
   let message: string;
   if (reason === "server_error" || reason === "timeout") {
     status =
-      described.status && described.status >= 400 && described.status < 500
-        ? described.status
+      failure.status && failure.status >= 400 && failure.status < 500
+        ? failure.status
         : reason === "timeout"
           ? 504
           : 502;
@@ -71,14 +99,15 @@ export function resolveOpenAiCompatError(err: unknown): OpenAiCompatError | unde
     message =
       reason === "overloaded"
         ? "upstream provider overloaded"
-        : described.rawError?.trim() || described.message.trim() || "request failed";
+        : detail || `upstream provider error (${reason})`;
   }
   return {
     status,
     error: {
       message: redactToolPayloadText(message),
       type,
-      ...(described.code ? { code: redactToolPayloadText(described.code) } : {}),
+      ...(failure.code ? { code: redactToolPayloadText(failure.code) } : {}),
+      ...identity,
     },
   };
 }

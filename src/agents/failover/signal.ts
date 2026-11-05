@@ -7,6 +7,10 @@ import { FAILOVER_REASONS as PROTOCOL_FAILOVER_REASONS } from "../../../packages
 // Persisted auth-profile cooldowns — auth-profiles/usage.ts.
 export const FAILOVER_REASONS = PROTOCOL_FAILOVER_REASONS;
 export type FailoverReason = (typeof FAILOVER_REASONS)[number];
+
+export function isFailoverReason(value: unknown): value is FailoverReason {
+  return typeof value === "string" && FAILOVER_REASONS.some((reason) => reason === value);
+}
 export type FailoverSignal = {
   status?: number;
   retryAfterMs?: number;

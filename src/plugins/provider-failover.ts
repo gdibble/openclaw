@@ -1,14 +1,10 @@
-import { FAILOVER_REASONS, type FailoverReason } from "../agents/failover/signal.js";
+import { isFailoverReason } from "../agents/failover/signal.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   resolveLoadedProviderRuntimePlugin,
   resolveLoadedProviderPluginsForHooks,
 } from "./provider-hook-runtime.js";
 import type { ProviderFailoverErrorContext, ProviderPlugin } from "./types.js";
-
-function isFailoverReason(value: unknown): value is FailoverReason {
-  return typeof value === "string" && FAILOVER_REASONS.some((reason) => reason === value);
-}
 
 // Error handling consumes prepared runtime. Cold discovery here can stall the
 // event loop while an unrelated provider is loaded just to describe a failure.

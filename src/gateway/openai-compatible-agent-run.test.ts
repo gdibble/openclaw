@@ -19,6 +19,7 @@ import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import {
   readOpenAiHttpRunTerminal,
   resolveOpenAiCompatibleAgentError,
+  resolveOpenAiCompatibleRunFailure,
   runOpenAiCompatibleAgentCommand,
 } from "./openai-compatible-agent-run.js";
 import { invalidateOperatorRolePolicy } from "./operator-role-policy.js";
@@ -418,6 +419,84 @@ describe("OpenAI-compatible agent run terminal metadata", () => {
   );
 });
 
+describe("OpenAI-compatible resolved run failures", () => {
+  const privateDetail = "401 invalid x-api-key sk-private-fixture for prompt: secret plan";
+
+  it("reports the latest classified attempt without its provider text", () => {
+    const mapped = resolveOpenAiCompatibleRunFailure({
+      meta: {
+        agentMeta: {
+          fallbackAttempts: [
+            { provider: "openai", model: "gpt-fixture", error: privateDetail, reason: "auth" },
+          ],
+        },
+        executionTrace: {
+          attempts: [
+            {
+              provider: "openai",
+              model: "gpt-fixture",
+              result: "candidate_failed",
+              reason: "auth",
+            },
+            {
+              provider: "anthropic",
+              model: "claude-fixture",
+              result: "surface_error",
+              reason: "rate_limit",
+              status: 429,
+            },
+          ],
+        },
+      },
+    });
+    expect(mapped).toEqual({
+      status: 429,
+      error: {
+        message: "upstream provider error (rate_limit)",
+        type: "rate_limit_error",
+        reason: "rate_limit",
+        provider: "anthropic",
+      },
+    });
+    expect(JSON.stringify(mapped)).not.toContain("sk-private");
+  });
+
+  it.each([
+    { name: "no attempts", meta: { error: { kind: "incomplete_turn", message: privateDetail } } },
+    {
+      name: "only a successful attempt",
+      meta: {
+        executionTrace: { attempts: [{ provider: "openai", model: "m", result: "success" }] },
+      },
+    },
+    {
+      name: "an unrecognized reason",
+      meta: { agentMeta: { fallbackAttempts: [{ provider: "openai", reason: "invented" }] } },
+    },
+  ])("keeps the generic failure for $name", ({ meta }) => {
+    expect(resolveOpenAiCompatibleRunFailure({ meta })).toEqual({
+      status: 500,
+      error: { message: "internal error", type: "api_error" },
+    });
+  });
+
+  it("names an unmapped reason without changing the generic failure", () => {
+    expect(
+      resolveOpenAiCompatibleRunFailure({
+        meta: { agentMeta: { fallbackAttempts: [{ provider: "lmstudio", reason: "unknown" }] } },
+      }),
+    ).toEqual({
+      status: 500,
+      error: {
+        message: "internal error",
+        type: "api_error",
+        reason: "unknown",
+        provider: "lmstudio",
+      },
+    });
+  });
+});
+
 describe("OpenAI-compatible agent error envelopes", () => {
   it.each([
     {
@@ -425,12 +504,14 @@ describe("OpenAI-compatible agent error envelopes", () => {
       error: () => AbortSignal.abort().reason,
       status: 500,
       message: "agent run was cancelled",
+      reason: undefined,
     },
     {
       name: "a provider transport timeout",
       error: () => new FailoverError("This operation was aborted", { reason: "timeout" }),
       status: 504,
       message: "upstream provider timeout",
+      reason: "timeout",
     },
     {
       name: "an abort caused by a timeout",
@@ -440,11 +521,33 @@ describe("OpenAI-compatible agent error envelopes", () => {
         }),
       status: 504,
       message: "upstream provider timeout",
+      reason: "timeout",
     },
-  ])("reports $name as $status", ({ error, status, message }) => {
+  ])("reports $name as $status", ({ error, status, message, reason }) => {
     expect(resolveOpenAiCompatibleAgentError(error())).toEqual({
       status,
-      error: { message, type: "api_error" },
+      error: { message, type: "api_error", ...(reason ? { reason } : {}) },
+    });
+  });
+
+  it("names the failover reason and provider of a thrown provider failure", () => {
+    expect(
+      resolveOpenAiCompatibleAgentError(
+        new FailoverError("Your credit balance is too low.", {
+          reason: "billing",
+          provider: "anthropic",
+          model: "claude-fixture",
+          profileId: "anthropic:private-profile",
+        }),
+      ),
+    ).toEqual({
+      status: 402,
+      error: {
+        message: "Your credit balance is too low.",
+        type: "insufficient_quota",
+        reason: "billing",
+        provider: "anthropic",
+      },
     });
   });
 

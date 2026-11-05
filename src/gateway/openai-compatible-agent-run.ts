@@ -1,8 +1,10 @@
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { isClientToolNameConflictError } from "../agents/agent-tool-definition-adapter.js";
 import type { AgentStreamParams, ClientToolDefinition } from "../agents/command/shared-types.js";
 import type { ImageContent } from "../agents/command/types.js";
 import { isFailoverError, isSignalTimeoutReason } from "../agents/failover/error.js";
+import { isFailoverReason } from "../agents/failover/signal.js";
 import { ToolAuthorizationError } from "../agents/tool-input-error.js";
 import { readAgentRunTerminalOutcome } from "../channels/turn/agent-run-terminal-outcome.js";
 import { createDefaultDeps } from "../cli/deps.js";
@@ -14,7 +16,11 @@ import { defaultRuntime } from "../runtime.js";
 import type { AuthorizedGatewayHttpRequest } from "./http-auth-utils.js";
 import type { GatewayHttpRequestAuthOptions } from "./http-request-authority.js";
 import { resolveGatewayHttpUnavailableError } from "./http-unavailable.js";
-import { resolveOpenAiCompatError, type OpenAiCompatError } from "./openai-compat-errors.js";
+import {
+  resolveOpenAiCompatError,
+  resolveOpenAiCompatFailover,
+  type OpenAiCompatError,
+} from "./openai-compat-errors.js";
 import { resolveGatewayOperatorRoleActor } from "./operator-role-policy.js";
 import { captureGatewayOperatorRunAuthority } from "./operator-run-authority.js";
 import type { GatewayContextResolver } from "./server-methods/types.js";
@@ -65,6 +71,27 @@ export function resolveOpenAiCompatibleAgentError(
       error: fallback ?? { message: "internal error", type: "api_error" },
     }
   );
+}
+
+/** A resolved failed run reports its latest classified provider attempt, never attempt text. */
+export function resolveOpenAiCompatibleRunFailure(result: unknown): OpenAiCompatError {
+  const meta = asOptionalRecord(asOptionalRecord(result)?.meta);
+  // Earlier fallback candidates precede the final candidate's own trace attempts.
+  const attempts = [
+    asOptionalRecord(meta?.agentMeta)?.fallbackAttempts,
+    asOptionalRecord(meta?.executionTrace)?.attempts,
+  ].flatMap((list) => (Array.isArray(list) ? list : []));
+  for (const candidate of attempts.toReversed()) {
+    const attempt = asOptionalRecord(candidate);
+    if (attempt?.result !== "success" && isFailoverReason(attempt?.reason)) {
+      return resolveOpenAiCompatFailover({
+        reason: attempt.reason,
+        status: typeof attempt.status === "number" ? attempt.status : undefined,
+        provider: normalizeOptionalString(attempt.provider),
+      });
+    }
+  }
+  return { status: 500, error: { message: "internal error", type: "api_error" } };
 }
 
 export function readOpenAiHttpRunTerminal(result: unknown): {

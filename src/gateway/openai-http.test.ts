@@ -1768,6 +1768,63 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
     },
   );
 
+  it.each([false, true])(
+    "names the failover reason and provider of a resolved provider failure (stream=%s)",
+    async (stream) => {
+      const privateDetail = "402 credit balance too low for key sk-private-fixture";
+      agentCommandMock.mockClear();
+      agentCommandMock.mockImplementationOnce((async (options: unknown) => {
+        const runId = (options as { runId?: string }).runId;
+        if (!runId) {
+          throw new Error("expected a chat-completion run ID");
+        }
+        return emitResolvedStreamingFailure(
+          runId,
+          { meta: { stopReason: "error" }, producerTerminal: true },
+          {
+            agentMeta: {
+              sessionId: "provider-failure",
+              provider: "openai",
+              model: "gpt-fixture",
+              fallbackAttempts: [
+                {
+                  provider: "openai",
+                  model: "gpt-fixture",
+                  error: privateDetail,
+                  reason: "billing",
+                },
+              ],
+            },
+          },
+        );
+      }) as never);
+      const providerFailure = {
+        message: "upstream provider error (billing)",
+        type: "insufficient_quota",
+        reason: "billing",
+        provider: "openai",
+      };
+
+      const res = await postChatCompletions(enabledPort, chatRequest({ stream }));
+      const body = await res.text();
+      expect(body).not.toContain("sk-private");
+      if (stream) {
+        expect(res.status).toBe(200);
+        const frames = parseSseDataLines(body);
+        expect(frames.at(-1)).toBe("[DONE]");
+        expect(
+          frames
+            .filter((frame) => frame !== "[DONE]")
+            .map((frame) => JSON.parse(frame) as Record<string, unknown>)
+            .filter((frame) => "error" in frame),
+        ).toEqual([{ error: providerFailure }]);
+      } else {
+        expect(res.status).toBe(402);
+        expect(JSON.parse(body)).toEqual({ error: providerFailure });
+      }
+    },
+  );
+
   it("forwards response_format into streamParams", async () => {
     const port = enabledPort;
     const mockAgentOnce = (payloads: Array<{ text: string }>) => {
